@@ -6258,8 +6258,20 @@ button.gantt-label:hover .gantt-label__title {
   background: rgb(224 82 110 / 15%);
 }
 
+/* A finished task has to read as finished at a glance, whether or not any
+   time was recorded against it: fill the whole row rather than only the share
+   of the planned time that was used. */
+.daily-item-list li.daily-item--done {
+  border-color: rgb(47 191 143 / 42%);
+}
+
 .daily-item-list li.daily-item--done::before {
-  background: rgb(47 191 143 / 12%);
+  width: 100%;
+  background: rgb(47 191 143 / 15%);
+}
+
+.daily-item-list li.daily-item--done .daily-item-usage strong {
+  color: var(--green);
 }
 
 .daily-check {
@@ -6276,8 +6288,8 @@ button.gantt-label:hover .gantt-label__title {
 
 .daily-check--done {
   border-color: transparent;
-  background: var(--primary);
-  box-shadow: 0 6px 14px rgb(124 92 252 / 30%);
+  background: var(--green);
+  box-shadow: 0 6px 14px rgb(47 191 143 / 32%);
 }
 
 .daily-item-main {
@@ -6438,6 +6450,41 @@ button.gantt-label:hover .gantt-label__title {
   border-radius: 12px;
   background: #fafaff;
   outline: none;
+}
+
+.timer-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.timer-mode__label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timer-mode button {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 70%);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.timer-mode button:hover {
+  border-color: #c4b8fa;
+}
+
+.timer-mode .timer-mode__button--active {
+  border-color: transparent;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
 }
 
 .quick-add__hint {
@@ -9604,11 +9651,14 @@ button.gantt-label:hover .gantt-label__title {
   list-style: none;
 }
 
+/* 伙伴动态 is as wide as the two cards stacked beside it put together, so the
+   feed reads as the main column rather than sharing the page evenly with the
+   sidebar. */
 .partners-layout {
   display: grid;
   align-items: start;
   gap: 20px;
-  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.85fr);
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
 }
 
 .partners-side {

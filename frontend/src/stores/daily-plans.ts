@@ -572,6 +572,17 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       })
     },
 
+    /**
+     * Replay the outbox without blocking the caller. Every daily-plan edit is
+     * applied to the cache first, so the interaction is finished by the time
+     * this runs; a rejected write surfaces through `failedCount` instead.
+     */
+    scheduleBackgroundFlush(): void {
+      void this.flushAndRefresh().catch(async () => {
+        if (this.ownerId) this.failedCount = await getFailedSyncCount(this.ownerId)
+      })
+    },
+
     async addItem(
       payload: DailyPlanItemCreate,
       options: { deferSync?: boolean } = {},
@@ -623,11 +634,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         // identical server write in the background, avoiding a visible wait
         // for both the item request and a second check-in request. Bulk
         // callers defer the flush so one import triggers one sync.
-        if (!options.deferSync) {
-          void this.flushAndRefresh().catch(async () => {
-            this.failedCount = await getFailedSyncCount(this.ownerId!)
-          })
-        }
+        if (!options.deferSync) this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
@@ -804,7 +811,10 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           daily_plan_id: this.plan.id,
         })
         await this.buildLocalCheckIn()
-        await this.flushAndRefresh()
+        // Cache-first, like addItem: ticking a task off or switching timers
+        // must not wait on an outbox replay. The shared queue performs the
+        // identical server write in the background.
+        this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
@@ -823,7 +833,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           daily_plan_id: this.plan.id,
         })
         await this.buildLocalCheckIn()
-        await this.flushAndRefresh()
+        this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
@@ -869,11 +879,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
             { deferSync: true },
           )
         }
-        if (candidates.length > 0) {
-          await this.flushAndRefresh().catch(async () => {
-            this.failedCount = await getFailedSyncCount(this.ownerId!)
-          })
-        }
+        if (candidates.length > 0) this.scheduleBackgroundFlush()
       } finally {
         this.importingProjectTasks = false
       }

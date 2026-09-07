@@ -39,6 +39,9 @@ interface TimerState {
   onlineListenerBound: boolean
   observedLocalDate: string
   rolloverPausePending: boolean
+  /** Stop the clock by itself once the planned duration is reached. */
+  autoStopAtTarget: boolean
+  autoStoppedSessionId: string | null
 }
 
 interface PendingExitPause {
@@ -53,6 +56,24 @@ interface TimerHeartbeat {
   owner_id: string
   session_id: string
   observed_at: string
+}
+
+const AUTO_STOP_STORAGE_KEY = 'time-budget:auto-stop-at-target'
+
+function readAutoStopPreference(): boolean {
+  try {
+    return localStorage.getItem(AUTO_STOP_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeAutoStopPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(AUTO_STOP_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // The choice still applies to this visit.
+  }
 }
 
 function exitPauseStorageKey(ownerId: string): string {
@@ -330,6 +351,8 @@ export const useTimerStore = defineStore('timer', {
     onlineListenerBound: false,
     observedLocalDate: localDateString(),
     rolloverPausePending: false,
+    autoStopAtTarget: readAutoStopPreference(),
+    autoStoppedSessionId: null,
   }),
 
   getters: {
@@ -359,6 +382,7 @@ export const useTimerStore = defineStore('timer', {
         if (this.active) {
           this.displaySeconds = snapshotDuration(this.active.snapshot)
           this.maybeNotifyTargetReached()
+          this.maybeAutoStopAtTarget()
           if (this.ownerId && this.active.snapshot.status === 'RUNNING') {
             writeTimerHeartbeat(this.ownerId, this.active.session_id)
           }
@@ -535,7 +559,9 @@ export const useTimerStore = defineStore('timer', {
       }
 
       this.notifiedSessionId = sessionId
-      this.targetNotice = '已到达计划用时，计时仍在继续；请按当前进度决定何时暂停或结束。'
+      this.targetNotice = this.autoStopAtTarget
+        ? '已到达计划用时，计时已自动停止；可以继续计时或标记完成。'
+        : '已到达计划用时，计时仍在继续；请按当前进度决定何时暂停或结束。'
       writeTargetNoticeMarker(this.ownerId, sessionId)
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('DayFlow 时间提醒', {
@@ -543,6 +569,43 @@ export const useTimerStore = defineStore('timer', {
           tag: `dayflow-target-${sessionId}`,
         })
       }
+    },
+
+    /**
+     * Choose what happens when the planned duration runs out: keep counting
+     * (the default, so an overrun is recorded honestly) or stop by itself.
+     */
+    setAutoStopAtTarget(enabled: boolean): void {
+      this.autoStopAtTarget = enabled
+      writeAutoStopPreference(enabled)
+      if (enabled) this.maybeAutoStopAtTarget()
+    },
+
+    /**
+     * Stop a running timer the moment it reaches the planned duration. The
+     * pause is dated to that exact instant, not to the tick that noticed it,
+     * so the recorded time is the planned time rather than a second more.
+     * Pressing 继续 afterwards is taken as "I want to keep going", and this
+     * session is not stopped again.
+     */
+    maybeAutoStopAtTarget(): void {
+      if (
+        !this.autoStopAtTarget ||
+        !this.active ||
+        this.active.snapshot.status !== 'RUNNING' ||
+        !this.targetSeconds ||
+        this.busy ||
+        this.totalSeconds < this.targetSeconds
+      ) {
+        return
+      }
+      const sessionId = this.active.session_id
+      if (this.autoStoppedSessionId === sessionId) return
+      this.autoStoppedSessionId = sessionId
+      const overshootSeconds = this.totalSeconds - this.targetSeconds
+      void this.pauseAt(new Date(Date.now() - overshootSeconds * 1_000)).catch(() => {
+        this.syncError = '计时已在本机停止，服务恢复后将自动同步。'
+      })
     },
 
     async syncPending(): Promise<void> {
@@ -706,6 +769,7 @@ export const useTimerStore = defineStore('timer', {
       this.targetSeconds = normalizedTarget
       this.targetNotice = ''
       this.notifiedSessionId = null
+      this.autoStoppedSessionId = null
       this.active = {
         ...this.active,
         target_seconds: normalizedTarget,
@@ -746,6 +810,7 @@ export const useTimerStore = defineStore('timer', {
       const sessionId = crypto.randomUUID()
       this.targetNotice = ''
       this.notifiedSessionId = null
+      this.autoStoppedSessionId = null
       if (this.targetSeconds) requestSystemNotificationPermission()
       const now = nextTimestamp()
       const snapshot: SessionSnapshot = {
@@ -763,25 +828,30 @@ export const useTimerStore = defineStore('timer', {
       try {
         await this.persistSnapshot(sessionId, snapshot, true)
         if (this.ownerId) writeTimerHeartbeat(this.ownerId, sessionId)
-        try {
-          // Structural changes must be attempted before their session, but a
-          // rejected or temporarily blocked sync must not cancel local timing.
-          await this.syncPending()
-          if (!this.online) {
-            this.syncError = '计时已在本机开始，联网后将自动同步。'
-          }
-        } catch (error) {
-          if (isNetworkError(error)) this.online = false
-          this.syncError = isNetworkError(error)
-            ? '计时已在本机开始，联网后将自动同步。'
-            : '计时已开始，但新任务或计时记录暂未同步，请稍后重试。'
-        }
       } finally {
         this.pendingCount = this.ownerId
           ? await localDb.sessionOutbox.where('owner_id').equals(this.ownerId).count()
           : 0
         this.busy = false
       }
+
+      // The local snapshot is already the source of truth for the UI, so the
+      // replay runs after the busy window closes. Waiting for it here made
+      // switching tasks feel slow: every start blocked the buttons on a full
+      // outbox round trip. The outbox still replays structural changes before
+      // this session, and keeps it queued if the network is unavailable.
+      void this.syncPending()
+        .then(() => {
+          if (!this.online) {
+            this.syncError = '计时已在本机开始，联网后将自动同步。'
+          }
+        })
+        .catch((error: unknown) => {
+          if (isNetworkError(error)) this.online = false
+          this.syncError = isNetworkError(error)
+            ? '计时已在本机开始，联网后将自动同步。'
+            : '计时已开始，但新任务或计时记录暂未同步，请稍后重试。'
+        })
     },
 
     async pause(awaitSync = false): Promise<void> {
@@ -882,6 +952,13 @@ export const useTimerStore = defineStore('timer', {
 
     async resume(): Promise<void> {
       if (!this.active || this.active.snapshot.status !== 'PAUSED') return
+      // Continuing past the planned time is a deliberate choice, so this
+      // session is not stopped again. An ordinary pause and resume before the
+      // planned time still gets the automatic stop when it arrives.
+      this.autoStoppedSessionId =
+        this.targetSeconds && this.totalSeconds >= this.targetSeconds
+          ? this.active.session_id
+          : null
       this.busy = true
       if (this.targetSeconds) requestSystemNotificationPermission()
       try {

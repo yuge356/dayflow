@@ -93,6 +93,8 @@ export const useSyncIssueStore = defineStore('sync-issues', {
           (operation) => operation.retry_count > 0,
         )
         for (const operation of failed) {
+          // Clearing retry_count is enough to make it due again: the backoff
+          // in the replay only applies to operations still marked as failed.
           await localDb.syncOperations.update(operation.id, {
             retry_count: 0,
             last_error: null,

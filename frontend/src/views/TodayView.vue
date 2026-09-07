@@ -1057,6 +1057,9 @@ onMounted(async () => {
   const ownerId = auth.user?.profile.id
   if (!ownerId) return
   try {
+    // The charts depend on nothing else on this page, so they must not queue
+    // behind the timer's own restore (which can itself make a request).
+    const chartsLoaded = loadTodayCharts()
     await timer.initialize(ownerId)
     const activeItemId = timer.active?.snapshot.daily_plan_item_id ?? null
     const requiresTaskLoad = tasks.ownerId !== ownerId || tasks.items.length === 0
@@ -1072,7 +1075,7 @@ onMounted(async () => {
       requiresDailyLoad
         ? daily.initialize(ownerId, todayDate.value, activeItemId)
         : Promise.resolve(),
-      loadTodayCharts(),
+      chartsLoaded,
     ])
     const failure = results.find((result) => result.status === 'rejected')
     if (failure) {

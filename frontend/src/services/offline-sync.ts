@@ -183,6 +183,23 @@ export async function getFailedSyncCount(ownerId: string): Promise<number> {
 
 const activeSyncs = new Map<string, Promise<number>>()
 
+/**
+ * How long a refused operation waits before it is sent again: 2 minutes after
+ * the first refusal, doubling up to an hour. Only the server's own rejections
+ * back off — a network failure leaves `retry_count` untouched, so going back
+ * online still replays everything at once.
+ */
+function retryDelayMs(retryCount: number): number {
+  return Math.min(2 ** retryCount, 60) * 60_000
+}
+
+function isRetryDue(operation: SyncOperation, now: number): boolean {
+  if (operation.retry_count <= 0) return true
+  const lastAttempt = Date.parse(operation.last_attempt_at ?? '')
+  if (!Number.isFinite(lastAttempt)) return true
+  return now - lastAttempt >= retryDelayMs(operation.retry_count)
+}
+
 async function runPendingSync(ownerId: string): Promise<number> {
   if (!navigator.onLine) return pendingSyncCount(ownerId)
   const operations = await localDb.syncOperations.where('owner_id').equals(ownerId).toArray()
@@ -190,7 +207,12 @@ async function runPendingSync(ownerId: string): Promise<number> {
     (left, right) =>
       left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id),
   )
+  const startedAt = Date.now()
   for (const operation of operations) {
+    // A write the server has already refused must not cost a round trip on
+    // every page open. It is retried on its own schedule, or at once when the
+    // user presses 全部重试 (which clears the quarantine marks).
+    if (!isRetryDue(operation, startedAt)) continue
     try {
       // Plan creation can remap the payloads of item operations that were
       // already included in this batch. Reload each operation so the next
@@ -206,6 +228,7 @@ async function runPendingSync(ownerId: string): Promise<number> {
       if (isNetworkError(error)) throw error
       await localDb.syncOperations.update(operation.id, {
         retry_count: operation.retry_count + 1,
+        last_attempt_at: new Date().toISOString(),
         last_error: axios.isAxiosError<{ detail?: string }>(error)
           ? (error.response?.data?.detail ?? '服务器拒绝了该离线操作')
           : '服务器拒绝了该离线操作',

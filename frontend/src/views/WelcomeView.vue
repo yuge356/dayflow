@@ -1,13 +1,12 @@
 <template>
   <main class="lp" :class="{ 'lp--still': reducedMotion, 'lp--reveal': revealArmed }">
-    <!-- Depth layers: a slow aurora, a fine grid, and a glow that follows the
-         pointer. All decorative, all behind the content. -->
+    <!-- Soft iridescent glass field. Decorative only. -->
     <div class="lp-backdrop" aria-hidden="true">
-      <span class="lp-orb lp-orb--violet" />
-      <span class="lp-orb lp-orb--cyan" />
-      <span class="lp-orb lp-orb--magenta" />
-      <span class="lp-grid" />
-      <span class="lp-spotlight" :style="spotlightStyle" />
+      <span class="lp-bubble lp-bubble--a" />
+      <span class="lp-bubble lp-bubble--b" />
+      <span class="lp-bubble lp-bubble--c" />
+      <span class="lp-bubble lp-bubble--d" />
+      <span class="lp-bubble lp-bubble--e" />
     </div>
 
     <header class="lp-nav" :class="{ 'is-stuck': scrolled }">
@@ -25,7 +24,7 @@
       </div>
     </header>
 
-    <section class="lp-hero" @pointermove.passive="trackPointer" @pointerleave="resetPointer">
+    <section class="lp-hero">
       <div class="lp-hero__copy">
         <p class="lp-eyebrow lp-reveal" style="--step: 0">
           <span class="lp-pulse" aria-hidden="true" />
@@ -40,13 +39,12 @@
         </h1>
 
         <p class="lp-lead lp-reveal" style="--step: 3">
-          计划、专注、复盘串成一条线。<br />
-          先看清时间去哪了，再谈管理时间。
+          从一项子任务开始，进度沿着任务树一路汇聚，<br />
+          直到整个项目被点亮。
         </p>
 
         <div class="lp-hero__actions lp-reveal" style="--step: 4">
           <RouterLink
-            ref="magneticCta"
             class="lp-cta lp-cta--large"
             :style="magneticStyle"
             :to="{ name: 'login', query: { mode: 'register' } }"
@@ -70,113 +68,110 @@
         </dl>
       </div>
 
-      <!-- The product's promise, drawn: minutes leave the clock and flow into
-           the things you chose to spend them on, which fill as they arrive. -->
-      <div class="lp-flow" role="img" :aria-label="flowLabel">
-        <div class="lp-flow__viewport">
-          <div class="lp-flow__scene" :style="parallaxStyle">
-          <svg class="lp-flow__svg" viewBox="0 0 560 420" aria-hidden="true">
+      <!-- The product's core idea, animated: a leaf task is finished, the
+           colour travels up the connector, its module fills, and finally the
+           whole project is complete. Everything lives inside one viewBox, so
+           the artwork scales as a single piece on any screen. -->
+      <div class="lp-stage" role="img" :aria-label="stageLabel">
+        <div class="lp-window">
+          <div class="lp-window__bar" aria-hidden="true">
+            <i class="lp-window__dot lp-window__dot--red" />
+            <i class="lp-window__dot lp-window__dot--amber" />
+            <i class="lp-window__dot lp-window__dot--green" />
+            <span class="lp-window__title">项目任务树</span>
+          </div>
+
+          <svg class="lp-tree" viewBox="0 0 760 470" aria-hidden="true">
             <defs>
-              <linearGradient id="lpStream" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#7c5cfc" stop-opacity="0" />
-                <stop offset="45%" stop-color="#8b7bff" stop-opacity=".55" />
-                <stop offset="100%" stop-color="#37e2d5" stop-opacity=".2" />
-              </linearGradient>
-              <linearGradient id="lpFill" x1="0" y1="1" x2="0" y2="0">
-                <stop offset="0%" stop-color="#7c5cfc" />
-                <stop offset="100%" stop-color="#37e2d5" />
+              <linearGradient id="lpDone" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#ff9d5c" />
+                <stop offset="34%" stop-color="#ff6ec7" />
+                <stop offset="68%" stop-color="#8b5cf6" />
+                <stop offset="100%" stop-color="#38bdf8" />
               </linearGradient>
             </defs>
 
-            <g class="lp-flow__dial">
-              <circle cx="96" cy="210" r="66" class="lp-flow__dial-track" />
-              <circle
-                cx="96"
-                cy="210"
-                r="66"
-                class="lp-flow__dial-sweep"
-                pathLength="1"
-              />
-              <line x1="96" y1="210" x2="96" y2="164" class="lp-flow__hand lp-flow__hand--minute" />
-              <line x1="96" y1="210" x2="126" y2="210" class="lp-flow__hand lp-flow__hand--hour" />
-              <circle cx="96" cy="210" r="5" class="lp-flow__pin" />
+            <!-- Connectors: a hairline always, plus a bright overlay that
+                 draws itself once the node it leaves is finished. -->
+            <g class="lp-links">
+              <g v-for="link in links" :key="link.id">
+                <path :d="link.d" class="lp-link" />
+                <path
+                  :d="link.d"
+                  class="lp-link-live"
+                  :class="{ 'is-lit': isDone(link.from) }"
+                  pathLength="1"
+                />
+                <circle
+                  :cx="link.dotX"
+                  :cy="link.dotY"
+                  r="3.4"
+                  class="lp-link-dot"
+                  :class="{ 'is-lit': isDone(link.from) }"
+                />
+              </g>
             </g>
 
-            <path
-              v-for="stream in streams"
-              :id="`lp-path-${stream.id}`"
-              :key="stream.id"
-              :d="stream.d"
-              class="lp-flow__stream"
-            />
-
-            <g v-for="(bucket, index) in buckets" :key="bucket.id">
+            <g
+              v-for="node in nodes"
+              :key="node.id"
+              class="lp-node"
+              :class="[`lp-node--${node.kind}`, { 'is-done': isDone(node.id) }]"
+            >
               <rect
-                :x="bucket.x"
-                :y="VESSEL_TOP"
-                :width="VESSEL_WIDTH"
-                :height="VESSEL_BOTTOM - VESSEL_TOP"
-                rx="16"
-                class="lp-flow__vessel"
+                :x="node.x"
+                :y="node.y"
+                :width="node.w"
+                :height="node.h"
+                :rx="node.kind === 'root' ? 20 : 16"
+                class="lp-node__glass"
               />
               <rect
-                :x="bucket.x + 6"
-                :y="VESSEL_BOTTOM - 6 - bucket.height"
-                :width="VESSEL_WIDTH - 12"
-                :height="bucket.height"
-                rx="11"
-                class="lp-flow__level"
-                :style="{ '--delay': `${index * 1.1}s` }"
+                :x="node.x"
+                :y="node.y"
+                :width="node.w"
+                :height="node.h"
+                :rx="node.kind === 'root' ? 20 : 16"
+                class="lp-node__fill"
               />
-              <text :x="bucket.x + VESSEL_WIDTH / 2" y="352" class="lp-flow__vessel-label">
-                {{ bucket.label }}
-              </text>
-              <text :x="bucket.x + VESSEL_WIDTH / 2" y="371" class="lp-flow__vessel-time">
-                {{ bucket.time }}
-              </text>
-            </g>
 
-            <!-- One dot per minute in flight, riding the very path the stream
-                 above draws. Living inside the viewBox means they scale with
-                 the artwork on any screen. -->
-            <circle v-for="minute in minutes" :key="minute.id" r="3.6" class="lp-minute">
-              <animateMotion
-                :dur="`${minute.duration}s`"
-                :begin="`${minute.delay}s`"
-                repeatCount="indefinite"
-                rotate="0"
-                keyPoints="0;1"
-                keyTimes="0;1"
-                calcMode="spline"
-                keySplines="0.5 0 0.6 1"
+              <text :x="node.x + 16" :y="node.y + 22" class="lp-node__label">
+                {{ node.label }}
+              </text>
+              <text
+                :x="node.x + 16"
+                :y="node.y + (node.kind === 'root' ? 48 : 44)"
+                class="lp-node__title"
               >
-                <mpath :href="`#lp-path-${minute.stream}`" />
-              </animateMotion>
-              <animate
-                attributeName="opacity"
-                values="0;1;1;0"
-                keyTimes="0;0.12;0.82;1"
-                :dur="`${minute.duration}s`"
-                :begin="`${minute.delay}s`"
-                repeatCount="indefinite"
+                {{ node.title }}
+              </text>
+              <text :x="node.x + 16" :y="node.y + node.h - 14" class="lp-node__hours">
+                {{ isDone(node.id) ? '100%' : node.hours }}
+              </text>
+
+              <rect
+                :x="node.x + node.w - 72"
+                :y="node.y + node.h - 27"
+                width="56"
+                height="18"
+                rx="9"
+                class="lp-node__pill"
               />
-            </circle>
+              <text :x="node.x + node.w - 44" :y="node.y + node.h - 14" class="lp-node__pill-text">
+                {{ isDone(node.id) ? '已完成' : '进行中' }}
+              </text>
+
+              <path :d="checkPath(node)" class="lp-node__check" pathLength="1" />
+            </g>
           </svg>
-          </div>
         </div>
 
-        <figcaption class="lp-flow__caption">
-          <span class="lp-flow__caption-dot" aria-hidden="true" />
-          今天的 24 小时，正在流向你选择的三件事
-        </figcaption>
+        <p class="lp-stage__caption" aria-live="polite">
+          <span class="lp-stage__dot" aria-hidden="true" />
+          {{ stageCaption }}
+        </p>
       </div>
     </section>
-
-    <div class="lp-marquee" aria-hidden="true">
-      <div class="lp-marquee__track">
-        <span v-for="word in marqueeWords" :key="word.id">{{ word.text }}<i>◆</i></span>
-      </div>
-    </div>
 
     <section id="preview" class="lp-preview" ref="previewEl">
       <header class="lp-section-head" :class="{ 'is-in': previewVisible }">
@@ -185,16 +180,21 @@
       </header>
 
       <div class="lp-preview__stage" :class="{ 'is-in': previewVisible }">
-        <div class="lp-device">
-          <div class="lp-device__bar" aria-hidden="true"><i /><i /><i /></div>
-          <!-- All three stay mounted and cross-fade by class. A keyed
-               <Transition> left the picture invisible whenever the enter
-               transition did not run (a backgrounded tab, for one). -->
-          <div class="lp-device__frame">
+        <div class="lp-window lp-window--shot">
+          <div class="lp-window__bar" aria-hidden="true">
+            <i class="lp-window__dot lp-window__dot--red" />
+            <i class="lp-window__dot lp-window__dot--amber" />
+            <i class="lp-window__dot lp-window__dot--green" />
+            <span class="lp-window__title">{{ slides[activeSlide]!.title }}</span>
+          </div>
+          <!-- All three stay mounted and cross-fade by class: a keyed
+               <Transition> leaves the picture invisible whenever its enter
+               transition does not run. -->
+          <div class="lp-shot-frame">
             <img
               v-for="(slide, index) in slides"
               :key="slide.id"
-              class="lp-device__shot"
+              class="lp-shot"
               :class="{ 'is-active': activeSlide === index }"
               :src="slide.image"
               :alt="slide.alt"
@@ -287,7 +287,7 @@ const highlights = [
   {
     title: '组织任务',
     text: '用项目、模块和任务拆解复杂计划，结构清楚才执行得动。',
-    art: `<svg viewBox="0 0 120 84"><rect class="a" x="4" y="30" width="34" height="24" rx="7"/><rect class="b" x="62" y="8" width="52" height="22" rx="7"/><rect class="b" x="62" y="54" width="52" height="22" rx="7"/><path class="l" d="M38 42C50 42 50 19 62 19" pathLength="1"/><path class="l" d="M38 42C50 42 50 65 62 65" pathLength="1"/></svg>`,
+    art: `<svg viewBox="0 0 120 84"><rect class="a" x="4" y="30" width="34" height="24" rx="8"/><rect class="b" x="62" y="8" width="52" height="22" rx="8"/><rect class="b" x="62" y="54" width="52" height="22" rx="8"/><path class="l" d="M38 42C50 42 50 19 62 19" pathLength="1"/><path class="l" d="M38 42C50 42 50 65 62 65" pathLength="1"/></svg>`,
   },
   {
     title: '记录投入',
@@ -297,61 +297,78 @@ const highlights = [
   {
     title: '看见趋势',
     text: '日、周、月多粒度回看节奏，及时调整下一轮计划。',
-    art: `<svg viewBox="0 0 120 84"><rect class="c" x="12" y="46" width="14" height="26" rx="5"/><rect class="c" x="35" y="32" width="14" height="40" rx="5"/><rect class="c" x="58" y="20" width="14" height="52" rx="5"/><rect class="c" x="81" y="38" width="14" height="34" rx="5"/></svg>`,
+    art: `<svg viewBox="0 0 120 84"><rect class="c" x="12" y="46" width="14" height="26" rx="6"/><rect class="c" x="35" y="32" width="14" height="40" rx="6"/><rect class="c" x="58" y="20" width="14" height="52" rx="6"/><rect class="c" x="81" y="38" width="14" height="34" rx="6"/></svg>`,
   },
 ] as const
 
-const marqueeWords = [
-  '专注计时',
-  '时间预算',
-  '项目任务树',
-  '每日计划',
-  '趋势分析',
-  '离线可用',
-  '伙伴协作',
-  '连续打卡',
-].flatMap((text, index) => [
-  { id: `a-${index}`, text },
-  { id: `b-${index}`, text },
-])
+type NodeKind = 'root' | 'module' | 'leaf'
 
-const VESSEL_WIDTH = 72
-const VESSEL_TOP = 96
-const VESSEL_BOTTOM = 324
+interface TreeNode {
+  id: string
+  kind: NodeKind
+  label: string
+  title: string
+  hours: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Position in the completion sequence; the root finishes last. */
+  order: number
+}
 
-const buckets = [
-  { id: 'study', x: 300, label: '课程学习', time: '3h 20m', height: 150 },
-  { id: 'build', x: 386, label: '项目推进', time: '2h 05m', height: 104 },
-  { id: 'read', x: 472, label: '阅读', time: '45m', height: 58 },
-] as const
+const nodes: TreeNode[] = [
+  { id: 'root', kind: 'root', label: '项目', title: 'DayFlow 发布', hours: '50h', x: 12, y: 192, w: 204, h: 88, order: 7 },
+  { id: 'mod-a', kind: 'module', label: '模块', title: '体验设计', hours: '22h', x: 268, y: 96, w: 176, h: 74, order: 3 },
+  { id: 'mod-b', kind: 'module', label: '模块', title: '数据能力', hours: '28h', x: 268, y: 300, w: 176, h: 74, order: 6 },
+  { id: 'leaf-a1', kind: 'leaf', label: '任务', title: '界面原型', hours: '6h', x: 548, y: 40, w: 196, h: 66, order: 1 },
+  { id: 'leaf-a2', kind: 'leaf', label: '任务', title: '任务树动效', hours: '10h', x: 548, y: 128, w: 196, h: 66, order: 2 },
+  { id: 'leaf-b1', kind: 'leaf', label: '任务', title: '时间统计', hours: '8h', x: 548, y: 244, w: 196, h: 66, order: 4 },
+  { id: 'leaf-b2', kind: 'leaf', label: '任务', title: '数据同步', hours: '20h', x: 548, y: 332, w: 196, h: 66, order: 5 },
+]
 
-// One curve per destination, shared by the drawn stream and the dots riding
-// it, so the artwork and the motion can never disagree. Each ends just above
-// its vessel, where the minutes drop in.
-const streams = [
-  { id: 'study', d: 'M164 204C232 196 252 140 336 118' },
-  { id: 'build', d: 'M164 211C244 214 340 176 422 118' },
-  { id: 'read', d: 'M164 218C252 236 420 226 508 118' },
-] as const
+const nodeById = new Map(nodes.map((node) => [node.id, node]))
 
-const MINUTES_PER_STREAM = 7
-const minutes = streams.flatMap((stream, streamIndex) =>
-  Array.from({ length: MINUTES_PER_STREAM }, (_, index) => ({
-    id: `${stream.id}-${index}`,
-    stream: stream.id,
-    delay: Number((streamIndex * 0.55 + index * (3.6 / MINUTES_PER_STREAM)).toFixed(2)),
-    duration: 3.6 + streamIndex * 0.4,
-  })),
-)
+/** One connector, drawn child → parent: the direction completion travels. */
+function buildLink(fromId: string, toId: string) {
+  const from = nodeById.get(fromId)!
+  const to = nodeById.get(toId)!
+  const x1 = from.x
+  const y1 = from.y + from.h / 2
+  const x2 = to.x + to.w
+  const y2 = to.y + to.h / 2
+  return {
+    id: `${fromId}-${toId}`,
+    from: fromId,
+    d: `M${x1} ${y1}C${x1 - 46} ${y1}, ${x2 + 46} ${y2}, ${x2} ${y2}`,
+    dotX: (x1 + x2) / 2,
+    dotY: (y1 + y2) / 2,
+  }
+}
 
-const flowLabel =
-  '动画：分钟从时钟流出，沿三条曲线汇入课程学习、项目推进和阅读三个容器，容器随之逐渐填满'
+const links = [
+  buildLink('leaf-a1', 'mod-a'),
+  buildLink('leaf-a2', 'mod-a'),
+  buildLink('leaf-b1', 'mod-b'),
+  buildLink('leaf-b2', 'mod-b'),
+  buildLink('mod-a', 'root'),
+  buildLink('mod-b', 'root'),
+]
 
-/**
- * Scroll reveals only hide content once this is on. Keeping the hidden state
- * out of the base stylesheet means a visitor whose JavaScript or transitions
- * never run still reads a complete page instead of a blank one.
- */
+const LAST_ORDER = 7
+const STEP_MS = 900
+const HOLD_STEPS = 3
+
+/** A tick sized to the card it sits on. */
+function checkPath(node: TreeNode): string {
+  // Sits in the card's right margin, clear of the title.
+  const size = node.kind === 'root' ? 38 : 30
+  const cx = node.x + node.w - (node.kind === 'root' ? 40 : 38)
+  const cy = node.y + node.h / 2 - (node.kind === 'root' ? 4 : 0)
+  return `M${cx - size / 2} ${cy} l${size * 0.3} ${size * 0.31} l${size * 0.58} -${size * 0.62}`
+}
+
+const stageStep = ref(0)
 const revealArmed = ref(false)
 const reducedMotion = ref(false)
 const scrolled = ref(false)
@@ -362,28 +379,29 @@ const featuresVisible = ref(false)
 const statsEl = ref<HTMLElement | null>(null)
 const previewEl = ref<HTMLElement | null>(null)
 const featuresEl = ref<HTMLElement | null>(null)
-const pointer = ref({ x: 0.5, y: 0.3, active: false })
 const magnet = ref({ x: 0, y: 0 })
+
+function isDone(nodeId: string): boolean {
+  const node = nodeById.get(nodeId)
+  return node ? stageStep.value >= node.order : false
+}
+
+const stageCaption = computed(() => {
+  if (stageStep.value >= LAST_ORDER) return '项目完成 · 50 小时全部兑现'
+  if (stageStep.value >= 4) return '第二个模块正在汇聚…'
+  if (stageStep.value >= 3) return '模块「体验设计」已完成'
+  if (stageStep.value >= 1) return '子任务完成，进度沿任务树上传'
+  return '从一项子任务开始'
+})
+
+const stageLabel =
+  '动画：任务树中的子任务逐个完成并被渐变色填充，颜色沿连接线汇聚到所属模块，最后整个项目被填满并打勾'
 
 const stats = [
   { label: '每天可分配', target: 24, unit: '小时', zero: '0', rendered: ref('0') },
   { label: '记录粒度', target: 1, unit: '秒', zero: '0', rendered: ref('0') },
   { label: '离线可用', target: 100, unit: '%', zero: '0', rendered: ref('0') },
 ]
-
-const spotlightStyle = computed<CSSProperties>(() => ({
-  opacity: pointer.value.active ? '1' : '0',
-  transform: `translate3d(${pointer.value.x * 100}vw, ${pointer.value.y * 100}vh, 0)`,
-}))
-
-const parallaxStyle = computed<CSSProperties>(() => {
-  if (reducedMotion.value) return {}
-  const x = (pointer.value.x - 0.5) * 18
-  const y = (pointer.value.y - 0.5) * 14
-  return {
-    transform: `perspective(1100px) rotateY(${x * 0.55}deg) rotateX(${-y * 0.55}deg) translate3d(${-x}px, ${-y}px, 0)`,
-  }
-})
 
 const magneticStyle = computed<CSSProperties>(() =>
   reducedMotion.value
@@ -393,6 +411,7 @@ const magneticStyle = computed<CSSProperties>(() =>
 
 let scrollFrame = 0
 let slideTimer = 0
+let stageTimer = 0
 let observer: IntersectionObserver | null = null
 let revealFallback = 0
 let motionQuery: MediaQueryList | null = null
@@ -403,18 +422,6 @@ function onScroll(): void {
     scrolled.value = window.scrollY > 12
     scrollFrame = 0
   })
-}
-
-function trackPointer(event: PointerEvent): void {
-  pointer.value = {
-    x: event.clientX / window.innerWidth,
-    y: event.clientY / window.innerHeight,
-    active: true,
-  }
-}
-
-function resetPointer(): void {
-  pointer.value = { ...pointer.value, active: false }
 }
 
 /** Let the primary call to action lean a little toward the cursor. */
@@ -441,6 +448,22 @@ function restartSlideTimer(): void {
   slideTimer = window.setInterval(() => {
     activeSlide.value = (activeSlide.value + 1) % slides.length
   }, 5200)
+}
+
+/**
+ * Walk the tree from leaves to root, hold the finished state for a moment,
+ * then start over. Reduced motion gets the finished tree with no cycling.
+ */
+function restartStageTimer(): void {
+  window.clearInterval(stageTimer)
+  if (reducedMotion.value) {
+    stageStep.value = LAST_ORDER
+    return
+  }
+  stageStep.value = 0
+  stageTimer = window.setInterval(() => {
+    stageStep.value = stageStep.value >= LAST_ORDER + HOLD_STEPS ? 0 : stageStep.value + 1
+  }, STEP_MS)
 }
 
 /** Count a number up once its panel is on screen. */
@@ -470,13 +493,16 @@ onMounted(() => {
   reducedMotion.value = motionQuery.matches
   const onMotionChange = (event: MediaQueryListEvent): void => {
     reducedMotion.value = event.matches
+    revealArmed.value = !event.matches
     restartSlideTimer()
+    restartStageTimer()
   }
   motionQuery.addEventListener('change', onMotionChange)
 
   window.addEventListener('scroll', onScroll, { passive: true })
   onScroll()
   restartSlideTimer()
+  restartStageTimer()
   if (!reducedMotion.value) revealArmed.value = true
 
   observer = new IntersectionObserver(
@@ -517,6 +543,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   if (scrollFrame) window.cancelAnimationFrame(scrollFrame)
   window.clearInterval(slideTimer)
+  window.clearInterval(stageTimer)
   window.clearTimeout(revealFallback)
   observer?.disconnect()
 })

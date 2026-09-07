@@ -1,7 +1,7 @@
 <template>
   <main class="jr" :class="{ 'jr--still': reducedMotion, 'jr--reveal': revealArmed }">
     <!-- Soft blue / mint / lavender wash. Decorative, transform-only. -->
-    <div class="jr-wash" aria-hidden="true">
+    <div class="jr-wash" aria-hidden="true" :style="{ '--flow': flow }">
       <span class="jr-glow jr-glow--blue" />
       <span class="jr-glow jr-glow--mint" />
       <span class="jr-glow jr-glow--lavender" />
@@ -65,22 +65,26 @@
                     <stop offset="52%" stop-color="#a58cff" />
                     <stop offset="100%" stop-color="#47d7b0" />
                   </linearGradient>
-                  <radialGradient id="jrRingCore">
-                    <stop offset="0%" stop-color="#5b8cff" stop-opacity=".16" />
-                    <stop offset="70%" stop-color="#a58cff" stop-opacity=".07" />
-                    <stop offset="100%" stop-color="#47d7b0" stop-opacity="0" />
-                  </radialGradient>
+                  <linearGradient id="jrLiquid" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#6ea3ff" />
+                    <stop offset="55%" stop-color="#9d8cff" />
+                    <stop offset="100%" stop-color="#47d7b0" />
+                  </linearGradient>
+                  <clipPath id="jrRingBowl">
+                    <circle cx="60" cy="60" r="46" />
+                  </clipPath>
                 </defs>
 
-                <!-- The disc fills in as the ring closes, so the centre is not
-                     an empty hole for most of the journey. -->
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="47"
-                  class="jr-ring__core"
-                  :style="{ opacity: 0.25 + streamProgress * 0.75 }"
-                />
+                <!-- The centre fills like a glass of water: the surface rises
+                     with completion while two waves drift across it. -->
+                <g clip-path="url(#jrRingBowl)">
+                  <circle cx="60" cy="60" r="46" class="jr-ring__bowl" />
+                  <g class="jr-ring__water" :style="{ transform: `translateY(${waterLevel}px)` }">
+                    <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--back" />
+                    <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--front" />
+                  </g>
+                </g>
+
                 <circle cx="60" cy="60" r="52" class="jr-ring__track" />
                 <circle
                   cx="60"
@@ -89,14 +93,6 @@
                   class="jr-ring__value"
                   pathLength="1"
                   :style="{ strokeDashoffset: 1 - streamProgress }"
-                />
-                <!-- A bright head riding the end of the arc. -->
-                <circle
-                  :cx="ringHead.x"
-                  :cy="ringHead.y"
-                  r="5"
-                  class="jr-ring__head"
-                  :style="{ opacity: streamProgress > 0.01 ? 1 : 0 }"
                 />
               </svg>
               <div class="jr-ring__center">
@@ -373,6 +369,7 @@ const totalHours = lessons.reduce((sum, lesson) => sum + lesson.hours, 0)
 const FINALE_SHARE = 0.16
 
 const progress = ref(0)
+const scrollFlow = ref(0)
 const stageHeight = ref(720)
 /**
  * Read before the first paint, so the page never renders its content and then
@@ -413,14 +410,23 @@ const layoutHead = computed(() => {
 
 const percent = computed(() => Math.round(streamProgress.value * 100))
 
-/** Where the arc currently ends, for the bright head that rides it. */
-const ringHead = computed(() => {
-  const angle = (-90 + streamProgress.value * 360) * (Math.PI / 180)
-  return {
-    x: Number((60 + 52 * Math.cos(angle)).toFixed(2)),
-    y: Number((60 + 52 * Math.sin(angle)).toFixed(2)),
-  }
-})
+/**
+ * One wavelength is 120 user units, drawn well past both edges of the bowl so
+ * the shape can slide a full wavelength and repeat seamlessly.
+ */
+const WAVE_PATH =
+  'M-240 0q30-9 60 0t60 0t60 0t60 0t60 0t60 0t60 0t60 0V200H-240Z'
+
+/**
+ * Drives the background glows. It keeps rising a little past the journey so
+ * the wash also answers to scrolling on the sections below it.
+ */
+const flow = computed(() => Number(scrollFlow.value.toFixed(4)))
+
+/** Water surface: below the bowl when empty, above it when full. */
+const waterLevel = computed(() =>
+  Number((108 - 96 * streamProgress.value).toFixed(2)),
+)
 
 const completedCount = computed(() =>
   Math.min(lessons.length, Math.floor(head.value)),
@@ -549,6 +555,8 @@ function onScroll(): void {
   // handful of rects; requestAnimationFrame here would only add a way for the
   // work to be skipped when frames are throttled.
   scrolled.value = window.scrollY > 12
+  const travel = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+  scrollFlow.value = Math.max(0, Math.min(1, window.scrollY / travel))
   updateJourney()
   updateReveal()
 }

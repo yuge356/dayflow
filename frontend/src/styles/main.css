@@ -1159,11 +1159,14 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   pointer-events: none;
 }
 
+/* `translate` composes with the keyframes' `transform`, so the ambient drift
+   and the scroll-driven flow can run at the same time without fighting. */
 .jr-glow {
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
   animation: jr-drift 34s ease-in-out infinite;
+  transition: translate 240ms linear, opacity 240ms linear;
 }
 
 .jr-glow--blue {
@@ -1172,6 +1175,8 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   width: 46vw;
   height: 46vw;
   background: radial-gradient(circle, rgb(91 140 255 / 32%), transparent 66%);
+  translate: calc(var(--flow, 0) * 26vw) calc(var(--flow, 0) * 34vh);
+  opacity: calc(1 - var(--flow, 0) * 0.25);
 }
 
 .jr-glow--mint {
@@ -1182,6 +1187,8 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   background: radial-gradient(circle, rgb(71 215 176 / 26%), transparent 68%);
   animation-duration: 40s;
   animation-direction: reverse;
+  translate: calc(var(--flow, 0) * -22vw) calc(var(--flow, 0) * -30vh);
+  opacity: calc(0.75 + var(--flow, 0) * 0.25);
 }
 
 .jr-glow--lavender {
@@ -1191,6 +1198,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   height: 30vw;
   background: radial-gradient(circle, rgb(165 140 255 / 26%), transparent 70%);
   animation-duration: 46s;
+  translate: calc(var(--flow, 0) * -30vw) calc(var(--flow, 0) * 22vh);
 }
 
 @keyframes jr-drift {
@@ -1466,7 +1474,6 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   display: block;
   width: 100%;
   height: auto;
-  transform: rotate(-90deg);
 }
 
 .jr-ring::before {
@@ -1483,9 +1490,41 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   50% { opacity: 1; transform: scale(1.03); }
 }
 
-.jr-ring__core {
-  fill: url(#jrRingCore);
-  transition: opacity 200ms linear;
+.jr-ring__bowl {
+  fill: rgb(120 140 220 / 7%);
+}
+
+/* Vertical position comes from scroll, so it must not lag behind a transition;
+   the waves themselves drift on their own clocks. */
+.jr-ring__water {
+  will-change: transform;
+}
+
+.jr-ring__wave {
+  fill: url(#jrLiquid);
+  animation: jr-wave 5s linear infinite;
+}
+
+.jr-ring__wave--back {
+  opacity: 0.42;
+  animation-duration: 7s;
+  animation-direction: reverse;
+}
+
+.jr-ring__wave--front {
+  opacity: 0.85;
+}
+
+/* One wavelength, so the shape repeats without a seam. */
+@keyframes jr-wave {
+  from { transform: translateX(0); }
+  to { transform: translateX(120px); }
+}
+
+.jr-ring__track,
+.jr-ring__value {
+  transform: rotate(-90deg);
+  transform-origin: 60px 60px;
 }
 
 .jr-ring__track {
@@ -1501,14 +1540,6 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   stroke-linecap: round;
   stroke-dasharray: 1;
   filter: drop-shadow(0 3px 10px rgb(91 140 255 / 45%));
-}
-
-.jr-ring__head {
-  fill: #fff;
-  stroke: #a58cff;
-  stroke-width: 3;
-  filter: drop-shadow(0 0 8px rgb(124 140 255 / 75%));
-  transition: opacity 220ms ease;
 }
 
 .jr-ring__center {

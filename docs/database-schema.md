@@ -114,6 +114,11 @@ ACCEPTED，导致邀请发出后关闭“可被搜索”的用户，其资料对
 子任务。只有没有子任务的 `TASK` 可以完成、重复、提醒、计时或加入今日计划。触发器同时阻止层级循环和
 非法父子类型，`(id, owner_id)` 唯一约束保证父子节点属于同一用户。
 
+`TASK` 还可以 **`parent_id IS NULL`**（迁移 `0019`）：这就是「临时任务」——在今日页随手记下、还没有
+归入任何项目的可执行任务。它和项目里的任务共用同一张表和同一套字段，可以计时、排期、统计；归入项目
+只是一次普通的 `parent_id` 更新，历史计时随之计入该项目。触发器要求临时任务保持叶子节点（它上面没有
+项目或模块，无法再挂子任务），`MODULE` 仍然必须有父节点。
+
 ## `task_dependencies`
 
 | 字段 | 类型 | 约束/说明 |
@@ -165,7 +170,7 @@ ACCEPTED，导致邀请发出后关闭“可被搜索”的用户，其资料对
 | `id` | UUID | PK |
 | `daily_plan_id` | UUID | FK → `daily_plans.id` |
 | `owner_id` | UUID | FK → `users.id`；与计划组成同所有者复合 FK |
-| `task_id` | UUID | 可空，FK → `tasks.id`；空值表示临时事项 |
+| `task_id` | UUID | 可空，FK → `tasks.id`；空值是旧版“临时事项”留下的当日条目，新建的临时任务一律有对应 `tasks` 行 |
 | `title` | VARCHAR(200) | 标题快照 |
 | `status` | `daily_plan_item_status` | 默认 `TODO` |
 | `estimated_seconds` | INTEGER | ≥ 0 |

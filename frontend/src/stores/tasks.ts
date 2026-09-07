@@ -38,6 +38,11 @@ function compareTasks(left: Task, right: Task): number {
   return left.created_at.localeCompare(right.created_at)
 }
 
+/** A task captured without a project above it (see the `unfiledTasks` getter). */
+export function isUnfiledTask(task: Pick<Task, 'node_type' | 'parent_id'>): boolean {
+  return task.node_type === 'TASK' && task.parent_id === null
+}
+
 function budgetLevel(estimatedSeconds: number, actualSeconds: number): Task['budget_level'] {
   if (estimatedSeconds <= 0) return 'NOT_SET'
   const ratio = actualSeconds / estimatedSeconds
@@ -187,6 +192,24 @@ export const useTaskStore = defineStore('tasks', {
       }
       roots.forEach(summarize)
       return roots
+    },
+
+    /**
+     * Roots that represent a project (or a node orphaned by a broken parent
+     * chain). Unfiled tasks are deliberately left out: they are listed on
+     * their own instead of masquerading as projects.
+     */
+    projectTree(): TaskNode[] {
+      return (this.tree as TaskNode[]).filter((node) => !isUnfiledTask(node))
+    },
+
+    /**
+     * Quick "临时任务" that have no project above them yet. They are ordinary
+     * executable tasks — timeable, schedulable, countable — waiting to be
+     * filed under a project, which is a plain `parent_id` update.
+     */
+    unfiledTasks(): TaskNode[] {
+      return (this.tree as TaskNode[]).filter(isUnfiledTask)
     },
   },
 

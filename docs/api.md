@@ -95,6 +95,11 @@ Session 按其开始时刻的资料时区半小时槽位归属，正在计时的
 已有条目，而不是新建第二条。浏览器导入新排期的任务与服务端排期补齐可能同时发生，两者各自生成条目
 id，此前会让同一个任务在“今日任务”里出现两次。
 
+`POST /tasks` 与 `PATCH /tasks/{id}` 允许 `node_type=TASK` 搭配 `parent_id=null`，即没有归入任何项目的
+「临时任务」。它是完整的可执行任务（可计时、排期、统计），把 `parent_id` 改成某个项目或模块即完成归档
+到项目，反之亦可移出。临时任务必须保持叶子节点：给它添加子任务，或把带子任务的任务移到顶层，都会返回
+400 `Only leaf tasks can be left unfiled`。`MODULE` 仍然必须有父节点（`Module nodes require a parent`）。
+
 项目模板载荷为 `{ name, description, icon, preset_key, budget_mode, fixed_budget_seconds,
 default_estimated_seconds, default_repeat_rule, structure }`。`structure` 是嵌套的
 `[{ node_type: MODULE|TASK, title, estimated_seconds, children }]` 大纲，只描述蓝图、不创建任务行：

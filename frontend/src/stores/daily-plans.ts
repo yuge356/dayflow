@@ -638,7 +638,27 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       taskId: string,
       estimatedSeconds: number,
     ): Promise<void> {
-      const normalizedSeconds = Math.max(0, Math.round(estimatedSeconds))
+      await this.syncLinkedTaskSnapshot(ownerId, taskId, {
+        estimated_seconds: estimatedSeconds,
+      })
+    },
+
+    /**
+     * Push a task's edited fields into the daily items that reference it.
+     * Daily items are snapshots, so only today and future days follow the
+     * task: past days keep the title and budget they were planned with.
+     */
+    async syncLinkedTaskSnapshot(
+      ownerId: string,
+      taskId: string,
+      fields: { title?: string; estimated_seconds?: number },
+    ): Promise<void> {
+      const changes: Partial<Pick<DailyPlanItem, 'title' | 'estimated_seconds'>> = {}
+      if (fields.title !== undefined) changes.title = fields.title
+      if (fields.estimated_seconds !== undefined) {
+        changes.estimated_seconds = Math.max(0, Math.round(fields.estimated_seconds))
+      }
+      if (Object.keys(changes).length === 0) return
       const today = localDateString()
       const plans = await localDb.cachedDailyPlans
         .where('owner_id')
@@ -657,7 +677,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
             linkedIds.has(item.id)
               ? {
                   ...item,
-                  estimated_seconds: normalizedSeconds,
+                  ...changes,
                   updated_at: new Date().toISOString(),
                 }
               : item,
@@ -671,7 +691,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         for (const item of linkedItems) {
           await enqueueSyncOperation(ownerId, 'daily_plan_item', item.id, 'update', {
             daily_plan_id: plan.id,
-            estimated_seconds: normalizedSeconds,
+            ...changes,
           })
         }
       }

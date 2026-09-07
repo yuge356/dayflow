@@ -75,7 +75,7 @@
 
           <p v-if="tasks.loading && tasks.items.length === 0" class="loading-state">正在加载任务…</p>
 
-          <div v-else-if="tasks.tree.length === 0" class="empty-state">
+          <div v-else-if="tasks.projectTree.length === 0" class="empty-state">
             <span aria-hidden="true">01</span>
             <h3>从第一个项目开始</h3>
             <p>创建项目，再添加模块和具体任务。只有具体任务可以计时和完成。</p>
@@ -354,6 +354,84 @@
             </div>
           </Teleport>
         </div>
+
+        <section class="unfiled-panel" aria-labelledby="unfiled-panel-title">
+          <header class="unfiled-panel__header">
+            <div>
+              <h2 id="unfiled-panel-title">
+                临时任务
+                <HintIcon
+                  text="在今日页快速添加、还没有归入任何项目的任务。它们和项目里的任务完全一样，可以计时、排期和统计；想好归属后用“归入”把它移进项目或模块，时长会一并计入该项目。"
+                />
+              </h2>
+              <p v-if="unfiledTasks.length > 0">
+                {{ unfiledTasks.length }} 项待归类 · 共计时 {{ formatDuration(unfiledTotalSeconds) }}
+                <template v-if="hiddenUnfiledCount > 0">
+                  · 另有 {{ hiddenUnfiledCount }} 项已完成被隐藏
+                </template>
+              </p>
+              <p v-else-if="hiddenUnfiledCount > 0">
+                {{ hiddenUnfiledCount }} 项临时任务已完成并被隐藏，勾选上方“显示已完成项目”可查看。
+              </p>
+              <p v-else>还没有临时任务。在今日页添加任务时不选择项目，就会先归档到这里。</p>
+            </div>
+            <button
+              v-if="unfiledTasks.length > 0"
+              class="button button--quiet button--small"
+              type="button"
+              :aria-expanded="unfiledOpen"
+              @click="unfiledOpen = !unfiledOpen"
+            >
+              {{ unfiledOpen ? '收起' : '展开' }}
+            </button>
+          </header>
+
+          <ul v-if="unfiledTasks.length > 0 && unfiledOpen" class="unfiled-list">
+            <li v-for="task in unfiledTasks" :key="task.id" class="unfiled-item">
+              <div class="unfiled-item__main">
+                <button type="button" class="unfiled-item__title" @click="openEdit(task)">
+                  <strong :class="{ 'is-complete': task.status === 'DONE' }">{{ task.title }}</strong>
+                </button>
+                <span class="unfiled-item__meta">
+                  {{ unfiledMeta(task) }}
+                </span>
+              </div>
+
+              <div class="unfiled-item__actions">
+                <label class="unfiled-item__file">
+                  <span class="sr-only">把{{ task.title }}归入项目</span>
+                  <select
+                    :value="''"
+                    :disabled="tasks.saving || fileTargets.length === 0"
+                    @change="fileUnfiledTask(task, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">
+                      {{ fileTargets.length === 0 ? '先创建一个项目' : '归入…' }}
+                    </option>
+                    <option v-for="target in fileTargets" :key="target.id" :value="target.id">
+                      {{ target.label }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  class="button button--quiet button--small"
+                  type="button"
+                  :disabled="timer.busy || Boolean(timer.active && timer.active.snapshot.status !== 'PAUSED')"
+                  @click="startTask(task)"
+                >
+                  计时
+                </button>
+                <button
+                  class="button button--finish button--small"
+                  type="button"
+                  @click="removeTask(task)"
+                >
+                  删除
+                </button>
+              </div>
+            </li>
+          </ul>
+        </section>
       </section>
     </main>
   </AppShell>
@@ -385,7 +463,9 @@ import type {
 } from '@/types/task'
 import { getApiErrorMessage } from '@/utils/api-error'
 import { getProjectTheme } from '@/utils/project-theme'
+import { projectFilingTargets } from '@/utils/task-filing'
 import { projectPrefixedTaskTitle } from '@/utils/task-title'
+import { formatDuration } from '@/utils/time'
 
 defineOptions({ name: 'TasksView' })
 
@@ -431,14 +511,73 @@ let firstProjectsSeen = false
 const showCompletedProjects = ref(false)
 const visibleProjectTree = computed(() =>
   showCompletedProjects.value
-    ? tasks.tree
-    : tasks.tree.filter((project) => project.status !== 'DONE'),
+    ? tasks.projectTree
+    : tasks.projectTree.filter((project) => project.status !== 'DONE'),
 )
 // 被“显示已完成项目”开关隐藏的项目数量。之前列表为空时页面既不显示空状态
 // 也不显示任何项目，看起来就像项目连同任务一起丢失了。
 const hiddenCompletedCount = computed(() =>
-  tasks.tree.length - visibleProjectTree.value.length,
+  tasks.projectTree.length - visibleProjectTree.value.length,
 )
+
+// 临时任务归档：在今日页快速添加、还没有归入项目的任务。
+const unfiledOpen = ref(true)
+const unfiledTasks = computed(() =>
+  showCompletedProjects.value
+    ? tasks.unfiledTasks
+    : tasks.unfiledTasks.filter((task) => task.status !== 'DONE'),
+)
+const hiddenUnfiledCount = computed(
+  () => tasks.unfiledTasks.length - unfiledTasks.value.length,
+)
+const unfiledTotalSeconds = computed(() =>
+  unfiledTasks.value.reduce((total, task) => total + task.actual_seconds, 0),
+)
+
+/** Projects and their modules, as the destinations an unfiled task can move to. */
+const fileTargets = computed(() => projectFilingTargets(tasks.items))
+
+function localDateString(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function unfiledMeta(task: Task): string {
+  const parts: string[] = []
+  if (task.status === 'DONE') parts.push('已完成')
+  if (task.estimated_seconds > 0) parts.push(`计划 ${formatDuration(task.estimated_seconds)}`)
+  if (task.actual_seconds > 0) parts.push(`已计时 ${formatDuration(task.actual_seconds)}`)
+  if (task.due_date) {
+    const [, month, day] = task.due_date.split('-')
+    parts.push(`截止 ${Number(month)}月${Number(day)}日`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : '还没有安排时间'
+}
+
+/**
+ * File a temporary task under a project or module. Its recorded time moves
+ * with it into that project's totals, and today's plan keeps the item —
+ * only its stored label changes to the project-prefixed one.
+ */
+async function fileUnfiledTask(task: Task, parentId: string): Promise<void> {
+  if (!parentId) return
+  loadError.value = ''
+  actionMessage.value = ''
+  const target = fileTargets.value.find((option) => option.id === parentId)
+  try {
+    const updated = await tasks.update(task.id, { parent_id: parentId })
+    if (tasks.ownerId) {
+      await daily.syncLinkedTaskSnapshot(tasks.ownerId, task.id, {
+        title: projectPrefixedTaskTitle(updated, tasks.items),
+      })
+    }
+    actionMessage.value = `已把“${task.title}”归入${target ? `“${target.name}”` : '所选项目'}。`
+  } catch (error) {
+    loadError.value = getApiErrorMessage(error)
+  }
+}
 
 async function toggleProjectComplete(task: Task): Promise<void> {
   const next: Task['status'] = task.status === 'DONE' ? 'IN_PROGRESS' : 'DONE'
@@ -456,7 +595,7 @@ async function toggleProjectComplete(task: Task): Promise<void> {
 }
 
 watch(
-  () => tasks.tree.map((project) => project.id),
+  () => tasks.projectTree.map((project) => project.id),
   (ids) => {
     if (ids.length === 0) return
     const initial = !firstProjectsSeen
@@ -900,6 +1039,9 @@ function finishDrag(): void {
 
 function canAddChildTo(task: Task): boolean {
   if (task.node_type !== 'TASK') return false
+  // A subtask needs a project or module above its parent. An unfiled 临时任务
+  // has nothing above it, so it stays a leaf until it is filed somewhere.
+  if (task.parent_id === null) return false
   const parentType = tasks.items.find((item) => item.id === task.parent_id)?.node_type ?? null
   return parentType !== 'TASK'
 }
@@ -922,7 +1064,14 @@ async function moveTask(parent: Task): Promise<void> {
     return
   }
   try {
-    await tasks.update(moving.id, { parent_id: parent.id })
+    const updated = await tasks.update(moving.id, { parent_id: parent.id })
+    if (tasks.ownerId) {
+      // Daily items carry a "项目/任务" label snapshot; moving the task to
+      // another project would otherwise leave today's list showing the old one.
+      await daily.syncLinkedTaskSnapshot(tasks.ownerId, moving.id, {
+        title: projectPrefixedTaskTitle(updated, tasks.items),
+      })
+    }
   } catch (error) {
     loadError.value = getApiErrorMessage(error)
   } finally {
@@ -960,11 +1109,17 @@ async function startTask(task: Task): Promise<void> {
   }
   loadError.value = ''
   actionMessage.value = ''
-  const availableSeconds = task.estimated_seconds - task.direct_actual_seconds
-  const remaining = task.estimated_seconds > 0 && availableSeconds > 0
-    ? availableSeconds
-    : null
+  // The timer face counts the task's whole recorded time, so the target is
+  // its full planned duration and the baseline is what it has already used.
+  const targetSeconds = task.estimated_seconds > 0 ? task.estimated_seconds : null
   const wasSwitching = timer.active?.snapshot.status === 'PAUSED'
+  // When the task is already on today's list, time it against that row so the
+  // Today page and this page show one clock instead of two separate totals.
+  const todayItem = daily.selectedDate === localDateString()
+    ? (daily.plan?.items.find(
+        (item) => item.task_id === task.id && item.status !== 'DONE',
+      ) ?? null)
+    : null
   try {
     if (
       timer.active?.snapshot.status === 'PAUSED'
@@ -974,7 +1129,13 @@ async function startTask(task: Task): Promise<void> {
       actionMessage.value = `已继续“${task.title}”的计时。`
       return
     }
-    await timer.start(task.id, null, remaining)
+    await timer.start(
+      task.id,
+      todayItem?.id ?? null,
+      targetSeconds,
+      todayItem ? todayItem.actual_seconds : task.direct_actual_seconds,
+    )
+    daily.setActiveItem(todayItem?.id ?? null)
     actionMessage.value = wasSwitching
       ? `已切换到“${task.title}”并开始计时。`
       : `已开始“${task.title}”的计时。`

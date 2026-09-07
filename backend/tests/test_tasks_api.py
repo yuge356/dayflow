@@ -621,3 +621,128 @@ async def test_active_session_prevents_task_subtree_deletion(client: AsyncClient
         headers=auth_header(token),
     )
     assert deleted.status_code == 409
+
+
+async def test_unfiled_task_can_be_created_timed_and_filed_later(
+    client: AsyncClient,
+) -> None:
+    """A quick 临时任务 has no project until the user files it under one."""
+
+    token, _ = await register_user(client, "unfiled_task")
+    unfiled = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={
+            "title": "临时想到的一件事",
+            "node_type": "TASK",
+            "parent_id": None,
+            "estimated_seconds": 1_800,
+        },
+    )
+    assert unfiled.status_code == 201
+    created = unfiled.json()
+    assert created["parent_id"] is None
+    # Nothing sits above it, so it is executable straight away.
+    assert created["is_leaf"] is True
+    assert created["node_type"] == "TASK"
+
+    project, module, _ = await create_structured_task(client, token, "正式任务")
+
+    filed = await client.patch(
+        f"/api/v1/tasks/{created['id']}",
+        headers=auth_header(token),
+        json={"parent_id": module["id"]},
+    )
+    assert filed.status_code == 200
+    assert filed.json()["parent_id"] == module["id"]
+
+    # Its time now rolls up into the module and the project above it.
+    listing = await client.get("/api/v1/tasks", headers=auth_header(token))
+    by_id = {task["id"]: task for task in listing.json()}
+    assert by_id[module["id"]]["task_count"] >= 1
+    assert by_id[project["id"]]["task_count"] >= 1
+
+    # Filing it back out again returns it to the unfiled archive.
+    unfiled_again = await client.patch(
+        f"/api/v1/tasks/{created['id']}",
+        headers=auth_header(token),
+        json={"parent_id": None},
+    )
+    assert unfiled_again.status_code == 200
+    assert unfiled_again.json()["parent_id"] is None
+
+
+async def test_only_executable_leaves_may_sit_at_the_top_level(
+    client: AsyncClient,
+) -> None:
+    """Containers still need a parent, and an unfiled task stays a leaf."""
+
+    token, _ = await register_user(client, "unfiled_task_rules")
+    orphan_module = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={"title": "没有项目的模块", "node_type": "MODULE", "parent_id": None},
+    )
+    assert orphan_module.status_code == 400
+    assert orphan_module.json()["detail"] == "Module nodes require a parent"
+
+    _, module, task = await create_structured_task(client, token, "带子任务的任务")
+    subtask = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={
+            "title": "子任务",
+            "node_type": "TASK",
+            "parent_id": task["id"],
+            "estimated_seconds": 600,
+        },
+    )
+    assert subtask.status_code == 201
+
+    # A subtask under an unfiled task would have no project above it at all.
+    rejected = await client.patch(
+        f"/api/v1/tasks/{task['id']}",
+        headers=auth_header(token),
+        json={"parent_id": None},
+    )
+    assert rejected.status_code == 400
+    assert rejected.json()["detail"] == "Only leaf tasks can be left unfiled"
+
+    still_filed = await client.get(
+        f"/api/v1/tasks/{task['id']}",
+        headers=auth_header(token),
+    )
+    assert still_filed.json()["parent_id"] == module["id"]
+
+
+async def test_unfiled_task_scheduled_today_reaches_the_daily_plan(
+    client: AsyncClient,
+) -> None:
+    """A temporary task due today is imported like any scheduled task."""
+
+    token, _ = await register_user(client, "unfiled_task_today")
+    today = profile_today()
+    created = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={
+            "title": "今天顺手做掉",
+            "node_type": "TASK",
+            "parent_id": None,
+            "estimated_seconds": 900,
+            "due_date": today.isoformat(),
+        },
+    )
+    assert created.status_code == 201
+
+    opened = await client.post(
+        "/api/v1/daily-plans/open",
+        headers=auth_header(token),
+        json={"plan_date": today.isoformat()},
+    )
+    assert opened.status_code == 200
+    items = opened.json()["plan"]["items"]
+    imported = next(item for item in items if item["task_id"] == created.json()["id"])
+    # No project above it, so the daily snapshot keeps the plain title.
+    assert imported["title"] == "今天顺手做掉"
+    assert imported["estimated_seconds"] == 900

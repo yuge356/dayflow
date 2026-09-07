@@ -431,7 +431,13 @@ async def validate_parent(
     node_type: TaskNodeType,
     task_id: UUID | None = None,
 ) -> Task | None:
-    """Enforce PROJECT -> MODULE -> TASK (+ one subtask level) and prevent cycles."""
+    """Enforce PROJECT -> MODULE -> TASK (+ one subtask level) and prevent cycles.
+
+    An executable task may also sit at the top level with no parent at all.
+    Those are the quick "临时任务" captured from the Today page before the
+    user decides where they belong; filing one under a project is an ordinary
+    ``parent_id`` update.
+    """
 
     if node_type == TaskNodeType.PROJECT:
         if parent_id is not None:
@@ -441,10 +447,19 @@ async def validate_parent(
             )
         return None
     if parent_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{node_type.value.title()} nodes require a parent",
-        )
+        if node_type != TaskNodeType.TASK:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"{node_type.value.title()} nodes require a parent",
+            )
+        # An unfiled task has no project or module above it, so a subtask of
+        # one would have nowhere to hang: keep unfiled tasks leaves.
+        if task_id is not None and await has_active_children(db, owner_id, task_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only leaf tasks can be left unfiled",
+            )
+        return None
     if task_id is not None and parent_id == task_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -1243,8 +1243,6 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 }
 
 .jr-quiet:hover { color: var(--jr-ink); }
-.jr-quiet--arrow::after { content: "→"; transition: transform 240ms ease; }
-.jr-quiet--arrow:hover::after { transform: translateX(4px); }
 
 .jr-cta {
   display: inline-flex;
@@ -1294,7 +1292,7 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   z-index: 1;
   display: flex;
   align-items: center;
-  min-height: min(700px, calc(100vh - 246px));
+  min-height: min(760px, calc(100vh - 132px));
   padding: clamp(28px, 6vh, 64px) 0 clamp(40px, 8vh, 88px);
 }
 
@@ -1345,17 +1343,37 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 
 .jr-title span { display: block; }
 
+/* The hue order is fixed left to right and stays that way: only a highlight
+   layer travels across it. Animating the gradient's own position would keep
+   re-ordering the colours on screen. */
 .jr-title span:last-child {
-  background: linear-gradient(100deg, #5b8cff, #a58cff 44%, #47d7b0);
-  background-size: 220% 100%;
+  background-image:
+    linear-gradient(
+      100deg,
+      rgb(255 255 255 / 0%) 0%,
+      rgb(255 255 255 / 60%) 10%,
+      rgb(255 255 255 / 0%) 20%
+    ),
+    linear-gradient(
+      90deg,
+      #4f7dfc 0%,
+      #7f8bff 28%,
+      #a58cff 54%,
+      #63c8cf 80%,
+      #35cfa6 100%
+    );
+  background-repeat: no-repeat;
+  background-size: 300% 100%, 100% 100%;
+  background-position: -120% 0, 0 0;
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
-  animation: jr-shift 9s linear infinite;
+  animation: jr-shift 7s ease-in-out infinite;
 }
 
 @keyframes jr-shift {
-  to { background-position: 220% 0; }
+  0%, 12% { background-position: -120% 0, 0 0; }
+  70%, 100% { background-position: 220% 0, 0 0; }
 }
 
 .jr-lead {
@@ -1381,6 +1399,25 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   z-index: 1;
   /* Taller than the viewport: the surplus is the animation's runway. */
   height: 460vh;
+}
+
+/* A quiet seam between the hero and the journey, so scrolling in reads as a
+   new chapter rather than more of the same screen. */
+.jr-journey::before {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: min(1220px, 100% - 56px);
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(120 130 190 / 26%) 22%,
+    rgb(120 130 190 / 26%) 78%,
+    transparent
+  );
+  transform: translateX(-50%);
+  content: "";
 }
 
 .jr-stage {
@@ -1432,6 +1469,25 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   transform: rotate(-90deg);
 }
 
+.jr-ring::before {
+  position: absolute;
+  inset: -14%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgb(91 140 255 / 16%), transparent 66%);
+  content: "";
+  animation: jr-ring-breathe 5.5s ease-in-out infinite;
+}
+
+@keyframes jr-ring-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+
+.jr-ring__core {
+  fill: url(#jrRingCore);
+  transition: opacity 200ms linear;
+}
+
 .jr-ring__track {
   fill: none;
   stroke: rgb(120 130 190 / 14%);
@@ -1441,10 +1497,18 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
 .jr-ring__value {
   fill: none;
   stroke: url(#jrRing);
-  stroke: #5b8cff;
   stroke-width: 9;
   stroke-linecap: round;
   stroke-dasharray: 1;
+  filter: drop-shadow(0 3px 10px rgb(91 140 255 / 45%));
+}
+
+.jr-ring__head {
+  fill: #fff;
+  stroke: #a58cff;
+  stroke-width: 3;
+  filter: drop-shadow(0 0 8px rgb(124 140 255 / 75%));
+  transition: opacity 220ms ease;
 }
 
 .jr-ring__center {
@@ -1505,40 +1569,6 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
   mask-image: linear-gradient(180deg, transparent, #000 22%, #000 84%, transparent);
 }
 
-.jr-stream__label {
-  position: absolute;
-  /* Clear of the sticky header, which floats above the pinned stage. */
-  top: clamp(74px, 11vh, 108px);
-  left: 50%;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0;
-  padding: 8px 18px;
-  border: 1px solid var(--jr-line);
-  border-radius: 999px;
-  background: var(--jr-glass);
-  color: var(--jr-muted);
-  font-size: 12.5px;
-  font-weight: 800;
-  white-space: nowrap;
-  transform: translateX(-50%);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
-.jr-stream__label .is-on { color: var(--jr-mint); }
-
-.jr-stream__divider {
-  width: 1px;
-  height: 12px;
-  background: var(--jr-hairline);
-}
-
-/* A wide, soft column of light behind the cards instead of a hairline rule:
-   it reads as atmosphere rather than a border drawn across the background,
-   and it brightens as the journey progresses. */
 .jr-beam {
   position: absolute;
   top: 6%;
@@ -2071,13 +2101,12 @@ input[type="month"]::-webkit-calendar-picker-indicator:hover {
      positioned, so an auto row would collapse to nothing. */
   .jr-stage__inner {
     gap: 18px;
-    padding: 84px 0 24px;
+    padding: 74px 0 24px;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
     align-items: stretch;
   }
 
-  .jr-stream__label { top: 8px; }
 
   .jr-summary {
     display: grid;

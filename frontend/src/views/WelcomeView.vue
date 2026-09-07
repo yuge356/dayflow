@@ -30,8 +30,8 @@
           <span class="jr-rise" style="--i: 2">整个计划就完成了</span>
         </h1>
         <p class="jr-lead jr-rise" style="--i: 3">
-          每完成一项，进度就往前一格。<br />
-          往下滚动，看你的学习计划一路走到 100%。
+          看见每一分钟<br />
+          如何积累成成果
         </p>
         <div class="jr-actions jr-rise" style="--i: 4">
           <RouterLink
@@ -44,7 +44,6 @@
             <span>免费开始</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
           </RouterLink>
-          <a class="jr-quiet jr-quiet--arrow" href="#preview">看看 DayFlow</a>
         </div>
       </div>
     </section>
@@ -60,6 +59,28 @@
 
             <div class="jr-ring" role="img" :aria-label="`完成度 ${percent}%`">
               <svg viewBox="0 0 120 120">
+                <defs>
+                  <linearGradient id="jrRing" x1="0" y1="1" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#5b8cff" />
+                    <stop offset="52%" stop-color="#a58cff" />
+                    <stop offset="100%" stop-color="#47d7b0" />
+                  </linearGradient>
+                  <radialGradient id="jrRingCore">
+                    <stop offset="0%" stop-color="#5b8cff" stop-opacity=".16" />
+                    <stop offset="70%" stop-color="#a58cff" stop-opacity=".07" />
+                    <stop offset="100%" stop-color="#47d7b0" stop-opacity="0" />
+                  </radialGradient>
+                </defs>
+
+                <!-- The disc fills in as the ring closes, so the centre is not
+                     an empty hole for most of the journey. -->
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="47"
+                  class="jr-ring__core"
+                  :style="{ opacity: 0.25 + streamProgress * 0.75 }"
+                />
                 <circle cx="60" cy="60" r="52" class="jr-ring__track" />
                 <circle
                   cx="60"
@@ -67,7 +88,15 @@
                   r="52"
                   class="jr-ring__value"
                   pathLength="1"
-                  :style="{ strokeDashoffset: 1 - progress }"
+                  :style="{ strokeDashoffset: 1 - streamProgress }"
+                />
+                <!-- A bright head riding the end of the arc. -->
+                <circle
+                  :cx="ringHead.x"
+                  :cy="ringHead.y"
+                  r="5"
+                  class="jr-ring__head"
+                  :style="{ opacity: streamProgress > 0.01 ? 1 : 0 }"
                 />
               </svg>
               <div class="jr-ring__center">
@@ -89,12 +118,6 @@
           </aside>
 
           <div class="jr-stream">
-            <p class="jr-stream__label">
-              <span :class="{ 'is-on': completedCount > 0 }">已完成 {{ completedCount }}</span>
-              <span class="jr-stream__divider" aria-hidden="true" />
-              <span>共 {{ lessons.length }} 节</span>
-            </p>
-
             <div
               class="jr-beam"
               aria-hidden="true"
@@ -389,6 +412,15 @@ const layoutHead = computed(() => {
 })
 
 const percent = computed(() => Math.round(streamProgress.value * 100))
+
+/** Where the arc currently ends, for the bright head that rides it. */
+const ringHead = computed(() => {
+  const angle = (-90 + streamProgress.value * 360) * (Math.PI / 180)
+  return {
+    x: Number((60 + 52 * Math.cos(angle)).toFixed(2)),
+    y: Number((60 + 52 * Math.sin(angle)).toFixed(2)),
+  }
+})
 
 const completedCount = computed(() =>
   Math.min(lessons.length, Math.floor(head.value)),

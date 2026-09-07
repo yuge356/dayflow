@@ -65,10 +65,16 @@
                     <stop offset="52%" stop-color="#a58cff" />
                     <stop offset="100%" stop-color="#47d7b0" />
                   </linearGradient>
-                  <linearGradient id="jrLiquid" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#6ea3ff" />
-                    <stop offset="55%" stop-color="#9d8cff" />
-                    <stop offset="100%" stop-color="#47d7b0" />
+                  <!-- Repeats end-to-end, so sliding it by one period loops
+                       seamlessly and the colour never jumps. -->
+                  <linearGradient id="jrLiquid" x1="0" y1="0" x2="1" y2="0.35">
+                    <stop offset="0%" stop-color="#5b8cff" />
+                    <stop offset="18%" stop-color="#8f8cff" />
+                    <stop offset="34%" stop-color="#a58cff" />
+                    <stop offset="50%" stop-color="#63c6d8" />
+                    <stop offset="66%" stop-color="#47d7b0" />
+                    <stop offset="82%" stop-color="#8f8cff" />
+                    <stop offset="100%" stop-color="#5b8cff" />
                   </linearGradient>
                   <clipPath id="jrRingBowl">
                     <circle cx="60" cy="60" r="46" />
@@ -80,6 +86,9 @@
                 <g clip-path="url(#jrRingBowl)">
                   <circle cx="60" cy="60" r="46" class="jr-ring__bowl" />
                   <g class="jr-ring__water" :style="{ transform: `translateY(${waterLevel}px)` }">
+                    <!-- Both layers are filled with the same wide, repeating
+                         gradient anchored to their own box, so drifting them
+                         also drifts the colour showing through the bowl. -->
                     <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--back" />
                     <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--front" />
                   </g>
@@ -167,32 +176,46 @@
       </div>
     </section>
 
-    <section class="jr-templates">
-      <div class="jr-shell">
-        <header :ref="registerReveal" class="jr-head jr-slide">
-          <p class="jr-kicker">从模板开始</p>
-          <h2>三种计划，开箱即用</h2>
-        </header>
+    <!-- Templates advance one per screen of scroll, the same way the journey
+         does, so the page keeps one reading rhythm throughout. -->
+    <section ref="templatesEl" class="jr-templates">
+      <div class="jr-templates__stage">
+        <div class="jr-shell">
+          <header class="jr-head jr-head--center">
+            <p class="jr-kicker">从模板开始</p>
+            <h2>三种计划，开箱即用</h2>
+          </header>
 
-        <div class="jr-templates__grid">
-          <article
-            v-for="(template, index) in templates"
-            :key="template.id"
-            :ref="registerReveal"
-            class="jr-template jr-slide"
-            :style="{ '--i': index, '--accent': template.accent }"
-          >
-            <span class="jr-template__badge" aria-hidden="true">{{ template.icon }}</span>
-            <h3>{{ template.name }}</h3>
-            <p>{{ template.text }}</p>
-            <ul class="jr-template__outline">
-              <li v-for="step in template.outline" :key="step">
-                <i aria-hidden="true" />
-                {{ step }}
-              </li>
-            </ul>
-            <p class="jr-template__foot">{{ template.meta }}</p>
-          </article>
+          <div class="jr-deck">
+            <article
+              v-for="(template, index) in templates"
+              :key="template.id"
+              class="jr-template"
+              :class="templateState(index)"
+              :style="{ ...templateStyle(index), '--accent': template.accent }"
+            >
+              <span class="jr-template__badge" aria-hidden="true">{{ template.icon }}</span>
+              <div class="jr-template__body">
+                <h3>{{ template.name }}</h3>
+                <p>{{ template.text }}</p>
+                <ul class="jr-template__outline">
+                  <li v-for="step in template.outline" :key="step">
+                    <i aria-hidden="true" />
+                    {{ step }}
+                  </li>
+                </ul>
+                <p class="jr-template__foot">{{ template.meta }}</p>
+              </div>
+            </article>
+          </div>
+
+          <ol class="jr-deck__dots" aria-hidden="true">
+            <li
+              v-for="(template, index) in templates"
+              :key="template.id"
+              :class="{ 'is-on': activeTemplate === index }"
+            />
+          </ol>
         </div>
       </div>
     </section>
@@ -369,6 +392,7 @@ const totalHours = lessons.reduce((sum, lesson) => sum + lesson.hours, 0)
 const FINALE_SHARE = 0.16
 
 const progress = ref(0)
+const templateProgress = ref(0)
 const scrollFlow = ref(0)
 const stageHeight = ref(720)
 /**
@@ -384,6 +408,7 @@ const revealArmed = ref(!reducedMotion.value)
 const scrolled = ref(false)
 const activeShot = ref(0)
 const journeyEl = ref<HTMLElement | null>(null)
+const templatesEl = ref<HTMLElement | null>(null)
 const revealTargets = new Set<Element>()
 const magnet = ref({ x: 0, y: 0 })
 
@@ -422,6 +447,43 @@ const WAVE_PATH =
  * the wash also answers to scrolling on the sections below it.
  */
 const flow = computed(() => Number(scrollFlow.value.toFixed(4)))
+
+/**
+ * Which template is centred. The head runs to the *last* index rather than
+ * past it, so reaching the end of the track leaves the third card in place
+ * instead of sliding it away.
+ */
+const templateHead = computed(
+  () => templateProgress.value * (templates.length - 1),
+)
+
+/** Each template holds the centre for most of its span, then hands over. */
+const templateLayoutHead = computed(() => {
+  const whole = Math.floor(templateHead.value)
+  const frac = templateHead.value - whole
+  return whole + (frac <= HOLD ? 0 : (frac - HOLD) / (1 - HOLD))
+})
+
+const activeTemplate = computed(() =>
+  Math.max(0, Math.min(templates.length - 1, Math.round(templateLayoutHead.value))),
+)
+
+function templateState(index: number): Record<string, boolean> {
+  return { 'is-active': activeTemplate.value === index }
+}
+
+function templateStyle(index: number): CSSProperties {
+  const delta = index - templateLayoutHead.value
+  const distance = Math.abs(delta)
+  const offset = delta * Math.max(150, Math.min(230, stageHeight.value * 0.26))
+  const scale = Math.max(0.82, 1 - distance * 0.09)
+  const opacity = Math.max(0, 1 - Math.max(0, distance - 0.35) * 1.25)
+  return {
+    transform: `translate3d(-50%, calc(-50% + ${offset.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`,
+    opacity: String(Number(opacity.toFixed(3))),
+    zIndex: String(50 - index),
+  }
+}
 
 /** Water surface: below the bowl when empty, above it when full. */
 const waterLevel = computed(() =>
@@ -550,6 +612,23 @@ function updateJourney(): void {
   progress.value = Math.max(0, Math.min(1, -rect.top / travel))
 }
 
+/** Same runway maths as the journey, for the template deck. */
+function updateTemplates(): void {
+  const section = templatesEl.value
+  if (!section) return
+  if (reducedMotion.value) {
+    templateProgress.value = 1
+    return
+  }
+  const rect = section.getBoundingClientRect()
+  const travel = rect.height - window.innerHeight
+  if (travel <= 0) {
+    templateProgress.value = rect.top <= 0 ? 1 : 0
+    return
+  }
+  templateProgress.value = Math.max(0, Math.min(1, -rect.top / travel))
+}
+
 function onScroll(): void {
   // Browsers already fire scroll at most once per frame, and this reads a
   // handful of rects; requestAnimationFrame here would only add a way for the
@@ -558,6 +637,7 @@ function onScroll(): void {
   const travel = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
   scrollFlow.value = Math.max(0, Math.min(1, window.scrollY / travel))
   updateJourney()
+  updateTemplates()
   updateReveal()
 }
 

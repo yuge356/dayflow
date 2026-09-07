@@ -1,14 +1,5 @@
 <template>
   <main class="lp" :class="{ 'lp--still': reducedMotion, 'lp--reveal': revealArmed }">
-    <!-- Soft iridescent glass field. Decorative only. -->
-    <div class="lp-backdrop" aria-hidden="true">
-      <span class="lp-bubble lp-bubble--a" />
-      <span class="lp-bubble lp-bubble--b" />
-      <span class="lp-bubble lp-bubble--c" />
-      <span class="lp-bubble lp-bubble--d" />
-      <span class="lp-bubble lp-bubble--e" />
-    </div>
-
     <header class="lp-nav" :class="{ 'is-stuck': scrolled }">
       <div class="lp-nav__inner">
         <AppLogo />
@@ -83,11 +74,22 @@
 
           <svg class="lp-tree" viewBox="0 0 760 470" aria-hidden="true">
             <defs>
-              <linearGradient id="lpDone" x1="0" y1="1" x2="1" y2="0">
-                <stop offset="0%" stop-color="#ff9d5c" />
-                <stop offset="34%" stop-color="#ff6ec7" />
-                <stop offset="68%" stop-color="#8b5cf6" />
-                <stop offset="100%" stop-color="#38bdf8" />
+              <!-- The completed colour never sits still: the gradient drifts
+                   across the card and a soft highlight sweeps over it, so the
+                   fill reads as liquid rather than a flat swatch. -->
+              <linearGradient id="lpLiquid" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stop-color="#ffb37a" />
+                <stop offset="26%" stop-color="#ff8ecb" />
+                <stop offset="54%" stop-color="#b48cff" />
+                <stop offset="78%" stop-color="#7cc4ff" />
+                <stop offset="100%" stop-color="#7fe6dd" />
+              </linearGradient>
+
+              <linearGradient id="lpSheen" x1="0" y1="0" x2="1" y2="0.3">
+                <stop offset="0%" stop-color="#ffffff" stop-opacity="0" />
+                <stop offset="42%" stop-color="#ffffff" stop-opacity=".5" />
+                <stop offset="58%" stop-color="#ffffff" stop-opacity=".5" />
+                <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
               </linearGradient>
             </defs>
 
@@ -126,38 +128,52 @@
                 :rx="node.kind === 'root' ? 20 : 16"
                 class="lp-node__glass"
               />
-              <rect
-                :x="node.x"
-                :y="node.y"
-                :width="node.w"
-                :height="node.h"
-                :rx="node.kind === 'root' ? 20 : 16"
-                class="lp-node__fill"
-              />
+              <clipPath :id="`lp-clip-${node.id}`">
+                <rect
+                  :x="node.x"
+                  :y="node.y"
+                  :width="node.w"
+                  :height="node.h"
+                  :rx="node.kind === 'root' ? 20 : 16"
+                  class="lp-node__clip"
+                />
+              </clipPath>
+              <g class="lp-node__fill" :clip-path="`url(#lp-clip-${node.id})`">
+                <rect
+                  :x="node.x - node.w * 0.55"
+                  :y="node.y"
+                  :width="node.w * 2.1"
+                  :height="node.h"
+                  class="lp-node__liquid"
+                />
+                <rect
+                  :x="node.x - node.w * 0.9"
+                  :y="node.y - 4"
+                  :width="node.w * 0.62"
+                  :height="node.h + 8"
+                  class="lp-node__sheen"
+                />
+              </g>
 
-              <text :x="node.x + 16" :y="node.y + 22" class="lp-node__label">
+              <text :x="node.x + 16" :y="node.y + METRICS[node.kind].label" class="lp-node__label">
                 {{ node.label }}
               </text>
-              <text
-                :x="node.x + 16"
-                :y="node.y + (node.kind === 'root' ? 48 : 44)"
-                class="lp-node__title"
-              >
+              <text :x="node.x + 16" :y="node.y + METRICS[node.kind].title" class="lp-node__title">
                 {{ node.title }}
               </text>
-              <text :x="node.x + 16" :y="node.y + node.h - 14" class="lp-node__hours">
+              <text :x="node.x + 16" :y="node.y + METRICS[node.kind].meta" class="lp-node__hours">
                 {{ isDone(node.id) ? '100%' : node.hours }}
               </text>
 
               <rect
-                :x="node.x + node.w - 72"
-                :y="node.y + node.h - 27"
-                width="56"
-                height="18"
-                rx="9"
+                :x="node.x + node.w - 64"
+                :y="node.y + 11"
+                width="50"
+                height="17"
+                rx="8.5"
                 class="lp-node__pill"
               />
-              <text :x="node.x + node.w - 44" :y="node.y + node.h - 14" class="lp-node__pill-text">
+              <text :x="node.x + node.w - 39" :y="node.y + 23" class="lp-node__pill-text">
                 {{ isDone(node.id) ? '已完成' : '进行中' }}
               </text>
 
@@ -173,13 +189,13 @@
       </div>
     </section>
 
-    <section id="preview" class="lp-preview" ref="previewEl">
-      <header class="lp-section-head" :class="{ 'is-in': previewVisible }">
+    <section id="preview" class="lp-preview">
+      <header :ref="registerReveal" class="lp-section-head lp-slide">
         <p class="lp-kicker">产品一览</p>
         <h2>三个界面，一条完整的时间线</h2>
       </header>
 
-      <div class="lp-preview__stage" :class="{ 'is-in': previewVisible }">
+      <div :ref="registerReveal" class="lp-preview__stage lp-slide">
         <div class="lp-window lp-window--shot">
           <div class="lp-window__bar" aria-hidden="true">
             <i class="lp-window__dot lp-window__dot--red" />
@@ -221,12 +237,12 @@
       </div>
     </section>
 
-    <section class="lp-features" ref="featuresEl" aria-label="核心能力">
+    <section class="lp-features" aria-label="核心能力">
       <article
         v-for="(item, index) in highlights"
         :key="item.title"
-        class="lp-feature"
-        :class="{ 'is-in': featuresVisible }"
+        :ref="registerReveal"
+        class="lp-feature lp-slide"
         :style="{ '--step': index }"
       >
         <div class="lp-feature__art" aria-hidden="true" v-html="item.art" />
@@ -236,7 +252,7 @@
     </section>
 
     <section class="lp-closing">
-      <div class="lp-closing__card">
+      <div :ref="registerReveal" class="lp-closing__card lp-slide">
         <h2>今天就让计划流动起来</h2>
         <p>注册即用，数据存在你自己的空间里。</p>
         <RouterLink class="lp-cta lp-cta--large" :to="{ name: 'login', query: { mode: 'register' } }">
@@ -254,7 +270,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  type ComponentPublicInstance,
+  type CSSProperties,
+} from 'vue'
 import { RouterLink } from 'vue-router'
 
 import AppLogo from '@/components/AppLogo.vue'
@@ -317,14 +341,25 @@ interface TreeNode {
   order: number
 }
 
+/**
+ * Baselines inside a card, measured from its top edge. Written out per kind
+ * rather than derived, because deriving them from the card height is exactly
+ * what pushed the title and the hours onto the same line.
+ */
+const METRICS: Record<NodeKind, { label: number; title: number; meta: number; check: number }> = {
+  root: { label: 26, title: 58, meta: 84, check: 38 },
+  module: { label: 23, title: 50, meta: 74, check: 30 },
+  leaf: { label: 22, title: 48, meta: 72, check: 28 },
+}
+
 const nodes: TreeNode[] = [
-  { id: 'root', kind: 'root', label: '项目', title: 'DayFlow 发布', hours: '50h', x: 12, y: 192, w: 204, h: 88, order: 7 },
-  { id: 'mod-a', kind: 'module', label: '模块', title: '体验设计', hours: '22h', x: 268, y: 96, w: 176, h: 74, order: 3 },
-  { id: 'mod-b', kind: 'module', label: '模块', title: '数据能力', hours: '28h', x: 268, y: 300, w: 176, h: 74, order: 6 },
-  { id: 'leaf-a1', kind: 'leaf', label: '任务', title: '界面原型', hours: '6h', x: 548, y: 40, w: 196, h: 66, order: 1 },
-  { id: 'leaf-a2', kind: 'leaf', label: '任务', title: '任务树动效', hours: '10h', x: 548, y: 128, w: 196, h: 66, order: 2 },
-  { id: 'leaf-b1', kind: 'leaf', label: '任务', title: '时间统计', hours: '8h', x: 548, y: 244, w: 196, h: 66, order: 4 },
-  { id: 'leaf-b2', kind: 'leaf', label: '任务', title: '数据同步', hours: '20h', x: 548, y: 332, w: 196, h: 66, order: 5 },
+  { id: 'root', kind: 'root', label: '项目', title: 'DayFlow 发布', hours: '50h', x: 12, y: 186, w: 204, h: 100, order: 7 },
+  { id: 'mod-a', kind: 'module', label: '模块', title: '体验设计', hours: '22h', x: 274, y: 84, w: 182, h: 88, order: 3 },
+  { id: 'mod-b', kind: 'module', label: '模块', title: '数据能力', hours: '28h', x: 274, y: 292, w: 182, h: 88, order: 6 },
+  { id: 'leaf-a1', kind: 'leaf', label: '任务', title: '界面原型', hours: '6h', x: 548, y: 28, w: 196, h: 84, order: 1 },
+  { id: 'leaf-a2', kind: 'leaf', label: '任务', title: '任务树动效', hours: '10h', x: 548, y: 122, w: 196, h: 84, order: 2 },
+  { id: 'leaf-b1', kind: 'leaf', label: '任务', title: '时间统计', hours: '8h', x: 548, y: 240, w: 196, h: 84, order: 4 },
+  { id: 'leaf-b2', kind: 'leaf', label: '任务', title: '数据同步', hours: '20h', x: 548, y: 334, w: 196, h: 84, order: 5 },
 ]
 
 const nodeById = new Map(nodes.map((node) => [node.id, node]))
@@ -359,26 +394,30 @@ const LAST_ORDER = 7
 const STEP_MS = 900
 const HOLD_STEPS = 3
 
-/** A tick sized to the card it sits on. */
+/** A tick in the card's lower-right corner, clear of every text row. */
 function checkPath(node: TreeNode): string {
-  // Sits in the card's right margin, clear of the title.
-  const size = node.kind === 'root' ? 38 : 30
-  const cx = node.x + node.w - (node.kind === 'root' ? 40 : 38)
-  const cy = node.y + node.h / 2 - (node.kind === 'root' ? 4 : 0)
+  const size = METRICS[node.kind].check
+  const cx = node.x + node.w - (node.kind === 'root' ? 46 : 38)
+  const cy = node.y + node.h * 0.62
   return `M${cx - size / 2} ${cy} l${size * 0.3} ${size * 0.31} l${size * 0.58} -${size * 0.62}`
 }
 
 const stageStep = ref(0)
-const revealArmed = ref(false)
-const reducedMotion = ref(false)
+/**
+ * Read before the first paint, so the page never renders its content and then
+ * fades it out again. Nothing is hidden unless `revealArmed` is on, which only
+ * happens when scripts run — a visitor without them reads a complete page.
+ */
+const reducedMotion = ref(
+  typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+)
+const revealArmed = ref(!reducedMotion.value)
 const scrolled = ref(false)
 const activeSlide = ref(0)
 const statsVisible = ref(false)
-const previewVisible = ref(false)
-const featuresVisible = ref(false)
 const statsEl = ref<HTMLElement | null>(null)
-const previewEl = ref<HTMLElement | null>(null)
-const featuresEl = ref<HTMLElement | null>(null)
+const revealTargets = new Set<Element>()
 const magnet = ref({ x: 0, y: 0 })
 
 function isDone(nodeId: string): boolean {
@@ -409,19 +448,47 @@ const magneticStyle = computed<CSSProperties>(() =>
     : { transform: `translate3d(${magnet.value.x}px, ${magnet.value.y}px, 0)` },
 )
 
-let scrollFrame = 0
 let slideTimer = 0
 let stageTimer = 0
-let observer: IntersectionObserver | null = null
 let revealFallback = 0
 let motionQuery: MediaQueryList | null = null
 
+/**
+ * Collect the blocks that slide in and out with the scroll. Template refs on
+ * a v-for hand back the element on mount and null on unmount.
+ */
+function registerReveal(element: Element | ComponentPublicInstance | null): void {
+  if (!(element instanceof Element)) return
+  revealTargets.add(element)
+}
+
+/**
+ * Slide blocks in as they rise past a line near the bottom of the viewport,
+ * and let them retract when they drop back below it. Measuring rects on each
+ * frame keeps the two directions exactly symmetric, which is the whole point
+ * of the effect — an IntersectionObserver would need paired margins to do the
+ * same and still only reports at threshold crossings.
+ */
+function updateReveal(): void {
+  if (!revealArmed.value) return
+  const trigger = window.innerHeight * 0.86
+  for (const element of revealTargets) {
+    element.classList.toggle('is-in', element.getBoundingClientRect().top < trigger)
+  }
+  if (!statsVisible.value && statsEl.value) {
+    if (statsEl.value.getBoundingClientRect().top < trigger) {
+      statsVisible.value = true
+      runCounters()
+    }
+  }
+}
+
 function onScroll(): void {
-  if (scrollFrame) return
-  scrollFrame = window.requestAnimationFrame(() => {
-    scrolled.value = window.scrollY > 12
-    scrollFrame = 0
-  })
+  // Browsers already fire scroll at most once per frame, and this reads six
+  // rects; wrapping it in requestAnimationFrame only adds a way for the work
+  // to be skipped entirely when frames are throttled.
+  scrolled.value = window.scrollY > 12
+  updateReveal()
 }
 
 /** Let the primary call to action lean a little toward the cursor. */
@@ -490,7 +557,6 @@ function runCounters(): void {
 
 onMounted(() => {
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-  reducedMotion.value = motionQuery.matches
   const onMotionChange = (event: MediaQueryListEvent): void => {
     reducedMotion.value = event.matches
     revealArmed.value = !event.matches
@@ -500,39 +566,21 @@ onMounted(() => {
   motionQuery.addEventListener('change', onMotionChange)
 
   window.addEventListener('scroll', onScroll, { passive: true })
-  onScroll()
   restartSlideTimer()
   restartStageTimer()
-  if (!reducedMotion.value) revealArmed.value = true
+  updateReveal()
+  // Template refs on a v-for can land after this hook; run once more when
+  // they have, so blocks already in view are revealed without a scroll.
+  void nextTick(updateReveal)
 
-  observer = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue
-        if (entry.target === statsEl.value && !statsVisible.value) {
-          statsVisible.value = true
-          runCounters()
-        }
-        if (entry.target === previewEl.value) previewVisible.value = true
-        if (entry.target === featuresEl.value) featuresVisible.value = true
-        observer?.unobserve(entry.target)
-      }
-    },
-    { threshold: 0.25 },
-  )
-  for (const target of [statsEl.value, previewEl.value, featuresEl.value]) {
-    if (target) observer.observe(target)
-  }
-
-  // Safety net: whatever happens to the observer, nothing stays hidden.
+  // If the refs never registered, stop hiding anything rather than leaving a
+  // blank page behind.
   revealFallback = window.setTimeout(() => {
-    if (!statsVisible.value) {
-      statsVisible.value = true
-      runCounters()
-    }
-    previewVisible.value = true
-    featuresVisible.value = true
-  }, 2500)
+    if (revealTargets.size === 0) revealArmed.value = false
+  }, 2000)
+
+  window.addEventListener('resize', onScroll, { passive: true })
+  updateReveal()
 
   onBeforeUnmount(() => {
     motionQuery?.removeEventListener('change', onMotionChange)
@@ -541,10 +589,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
-  if (scrollFrame) window.cancelAnimationFrame(scrollFrame)
+  window.removeEventListener('resize', onScroll)
   window.clearInterval(slideTimer)
   window.clearInterval(stageTimer)
   window.clearTimeout(revealFallback)
-  observer?.disconnect()
+  revealTargets.clear()
 })
 </script>

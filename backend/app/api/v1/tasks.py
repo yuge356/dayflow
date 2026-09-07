@@ -31,6 +31,7 @@ from app.services.tasks import (
     get_owned_task,
     replace_task_dependencies,
     resolve_container_defaults,
+    resolve_inbox_parent_id,
     validate_parent,
 )
 
@@ -96,10 +97,16 @@ async def create_task(
         if existing is not None:
             responses = await build_owned_task_responses(db, current_user.id)
             return next(item for item in responses if item.id == existing.id)
+    # A quick 临时任务 arrives with no parent. File it under the owner's
+    # 临时任务 project so it lives inside the hierarchy the database already
+    # allows, instead of requiring a schema change to sit outside it.
+    parent_id = payload.parent_id
+    if parent_id is None and payload.node_type == TaskNodeType.TASK:
+        parent_id = await resolve_inbox_parent_id(db, current_user.id)
     parent = await validate_parent(
         db,
         current_user.id,
-        payload.parent_id,
+        parent_id,
         payload.node_type,
     )
     estimated_seconds = payload.estimated_seconds
@@ -146,7 +153,7 @@ async def create_task(
     task = Task(
         **({"id": payload.id} if payload.id is not None else {}),
         owner_id=current_user.id,
-        parent_id=payload.parent_id,
+        parent_id=parent_id,
         node_type=payload.node_type,
         title=payload.title,
         priority=payload.priority,
@@ -174,7 +181,7 @@ async def create_task(
             payload.planned_end_date if payload.node_type == TaskNodeType.TASK else None
         ),
         daily_reminder_time=daily_reminder_time,
-        sort_order=await next_sort_order(db, current_user.id, payload.parent_id),
+        sort_order=await next_sort_order(db, current_user.id, parent_id),
     )
     db.add(task)
     try:
@@ -222,6 +229,10 @@ async def update_task(
 
     if "parent_id" in changes:
         new_parent_id = changes["parent_id"]
+        # Moving a task back out of a project returns it to 临时任务 rather
+        # than leaving it parentless.
+        if new_parent_id is None and task.node_type == TaskNodeType.TASK:
+            new_parent_id = await resolve_inbox_parent_id(db, current_user.id)
         await validate_parent(
             db,
             current_user.id,

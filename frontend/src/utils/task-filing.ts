@@ -1,5 +1,16 @@
 import type { Task } from '@/types/task'
 
+/**
+ * The project quick 临时任务 are parked in. The server creates it on demand
+ * and recognises it by this title, so the feature works on any database that
+ * already allows a task under a project — no schema change required.
+ */
+export const INBOX_PROJECT_TITLE = '临时任务'
+
+export function isInboxProject(task: Pick<Task, 'node_type' | 'title'>): boolean {
+  return task.node_type === 'PROJECT' && task.title === INBOX_PROJECT_TITLE
+}
+
 export interface FilingTarget {
   id: string
   /** Display label; modules are indented under the project they belong to. */
@@ -22,7 +33,13 @@ function compareForDisplay(left: Task, right: Task): number {
  */
 export function projectFilingTargets(tasks: Task[]): FilingTarget[] {
   const projects = tasks
-    .filter((task) => task.node_type === 'PROJECT' && task.status !== 'DONE')
+    .filter(
+      (task) =>
+        task.node_type === 'PROJECT' &&
+        task.status !== 'DONE' &&
+        // 临时任务 is where a task waits to be filed, never a filing target.
+        !isInboxProject(task),
+    )
     .sort(compareForDisplay)
   const targets: FilingTarget[] = []
   for (const project of projects) {

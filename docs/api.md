@@ -95,10 +95,14 @@ Session 按其开始时刻的资料时区半小时槽位归属，正在计时的
 已有条目，而不是新建第二条。浏览器导入新排期的任务与服务端排期补齐可能同时发生，两者各自生成条目
 id，此前会让同一个任务在“今日任务”里出现两次。
 
-`POST /tasks` 与 `PATCH /tasks/{id}` 允许 `node_type=TASK` 搭配 `parent_id=null`，即没有归入任何项目的
-「临时任务」。它是完整的可执行任务（可计时、排期、统计），把 `parent_id` 改成某个项目或模块即完成归档
-到项目，反之亦可移出。临时任务必须保持叶子节点：给它添加子任务，或把带子任务的任务移到顶层，都会返回
-400 `Only leaf tasks can be left unfiled`。`MODULE` 仍然必须有父节点（`Module nodes require a parent`）。
+`POST /tasks` 与 `PATCH /tasks/{id}` 接受 `node_type=TASK` 搭配 `parent_id=null`，表示「还没想好归属」。
+服务端不会把它存成没有父节点的行，而是把它挂到该用户的**「临时任务」项目**下（按标题识别，第一次用到时
+自动创建，之后复用同一个）。因此这条能力**不依赖任何数据库迁移**：任务挂在项目下本来就是合法层级。
+响应里的 `parent_id` 就是这个项目的 id。把 `parent_id` 改成别的项目或模块即完成归档，改回 `null`
+则退回「临时任务」项目。`MODULE` 仍然必须有父节点（`Module nodes require a parent`）。
+
+「临时任务」项目只是收纳处，不是用户自己建的项目：今日计划快照里它下面的任务只显示任务名，不加
+`临时任务/` 前缀；前端也不会把它列进项目列表或“归入…”的候选项。
 
 项目模板载荷为 `{ name, description, icon, preset_key, budget_mode, fixed_budget_seconds,
 default_estimated_seconds, default_repeat_rule, structure }`。`structure` 是嵌套的

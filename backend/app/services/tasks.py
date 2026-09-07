@@ -424,6 +424,68 @@ async def has_active_children(db: AsyncSession, owner_id: UUID, task_id: UUID) -
     return child_id is not None
 
 
+INBOX_PROJECT_TITLE = "临时任务"
+
+
+async def get_inbox_project(db: AsyncSession, owner_id: UUID) -> Task | None:
+    """Return the owner's 临时任务 project, if they have one."""
+
+    return await db.scalar(
+        select(Task)
+        .where(
+            Task.owner_id == owner_id,
+            Task.node_type == TaskNodeType.PROJECT,
+            Task.title == INBOX_PROJECT_TITLE,
+            Task.deleted_at.is_(None),
+        )
+        .order_by(Task.created_at, Task.id)
+        .limit(1)
+    )
+
+
+async def resolve_inbox_parent_id(db: AsyncSession, owner_id: UUID) -> UUID:
+    """Return the project quick 临时任务 are filed under, creating it once.
+
+    A task captured on the Today page often has nowhere to go yet. Parking it
+    in a real project — rather than leaving it parentless — keeps it inside
+    the hierarchy the database already enforces, so the feature needs no
+    schema change to work on an existing deployment.
+    """
+
+    inbox = await get_inbox_project(db, owner_id)
+    if inbox is not None:
+        return inbox.id
+    inbox = Task(
+        owner_id=owner_id,
+        parent_id=None,
+        node_type=TaskNodeType.PROJECT,
+        title=INBOX_PROJECT_TITLE,
+        sort_order=await next_sort_order_value(db, owner_id, None),
+    )
+    db.add(inbox)
+    await db.flush()
+    await db.refresh(inbox)
+    return inbox.id
+
+
+async def next_sort_order_value(
+    db: AsyncSession,
+    owner_id: UUID,
+    parent_id: UUID | None,
+) -> int:
+    """Append a node to the end of its sibling list."""
+
+    parent_filter = Task.parent_id.is_(None) if parent_id is None else Task.parent_id == parent_id
+    current_max = await db.scalar(
+        select(func.max(Task.sort_order)).where(
+            Task.owner_id == owner_id,
+            parent_filter,
+            Task.deleted_at.is_(None),
+        )
+    )
+    return (current_max if current_max is not None else -1) + 1
+
+
 async def validate_parent(
     db: AsyncSession,
     owner_id: UUID,
@@ -433,10 +495,10 @@ async def validate_parent(
 ) -> Task | None:
     """Enforce PROJECT -> MODULE -> TASK (+ one subtask level) and prevent cycles.
 
-    An executable task may also sit at the top level with no parent at all.
-    Those are the quick "临时任务" captured from the Today page before the
-    user decides where they belong; filing one under a project is an ordinary
-    ``parent_id`` update.
+    Every module and task needs a parent. A quick "临时任务" captured without
+    one is not an exception: :func:`resolve_inbox_parent_id` puts it under the
+    owner's 临时任务 project before this runs, so the database's own hierarchy
+    trigger never has to be relaxed for it.
     """
 
     if node_type == TaskNodeType.PROJECT:
@@ -447,19 +509,10 @@ async def validate_parent(
             )
         return None
     if parent_id is None:
-        if node_type != TaskNodeType.TASK:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"{node_type.value.title()} nodes require a parent",
-            )
-        # An unfiled task has no project or module above it, so a subtask of
-        # one would have nowhere to hang: keep unfiled tasks leaves.
-        if task_id is not None and await has_active_children(db, owner_id, task_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only leaf tasks can be left unfiled",
-            )
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{node_type.value.title()} nodes require a parent",
+        )
     if task_id is not None and parent_id == task_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

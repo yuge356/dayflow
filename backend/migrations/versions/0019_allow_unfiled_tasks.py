@@ -2,6 +2,13 @@
 
 Revision ID: 0019
 Revises: 0018
+
+No longer required by the application. "临时任务" are filed under an
+auto-created 临时任务 project instead of being stored without a parent, so the
+feature works on a database that never ran this revision — which matters
+because Vercel deployments do not run Alembic automatically. The revision is
+kept so databases that already applied it stay on a known chain; the relaxed
+trigger it installs is harmless, as nothing writes a parentless task.
 """
 
 from collections.abc import Sequence

@@ -623,13 +623,17 @@ async def test_active_session_prevents_task_subtree_deletion(client: AsyncClient
     assert deleted.status_code == 409
 
 
-async def test_unfiled_task_can_be_created_timed_and_filed_later(
+async def test_task_without_a_parent_is_filed_under_the_inbox_project(
     client: AsyncClient,
 ) -> None:
-    """A quick 临时任务 has no project until the user files it under one."""
+    """A quick 临时任务 lands in an auto-created 临时任务 project.
 
-    token, _ = await register_user(client, "unfiled_task")
-    unfiled = await client.post(
+    Parking it in a real project keeps it inside the hierarchy the database
+    already enforces, so capturing a task needs no schema change.
+    """
+
+    token, _ = await register_user(client, "inbox_task")
+    first = await client.post(
         "/api/v1/tasks",
         headers=auth_header(token),
         json={
@@ -639,45 +643,76 @@ async def test_unfiled_task_can_be_created_timed_and_filed_later(
             "estimated_seconds": 1_800,
         },
     )
-    assert unfiled.status_code == 201
-    created = unfiled.json()
-    assert created["parent_id"] is None
-    # Nothing sits above it, so it is executable straight away.
+    assert first.status_code == 201
+    created = first.json()
+    assert created["parent_id"] is not None
     assert created["is_leaf"] is True
-    assert created["node_type"] == "TASK"
+
+    listing = await client.get("/api/v1/tasks", headers=auth_header(token))
+    by_id = {task["id"]: task for task in listing.json()}
+    inbox = by_id[created["parent_id"]]
+    assert inbox["node_type"] == "PROJECT"
+    assert inbox["title"] == "临时任务"
+    assert inbox["parent_id"] is None
+
+    # A second capture reuses the same holding project instead of making more.
+    second = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={"title": "另一件事", "node_type": "TASK", "parent_id": None},
+    )
+    assert second.status_code == 201
+    assert second.json()["parent_id"] == inbox["id"]
+    projects = await client.get("/api/v1/tasks", headers=auth_header(token))
+    inboxes = [
+        task
+        for task in projects.json()
+        if task["node_type"] == "PROJECT" and task["title"] == "临时任务"
+    ]
+    assert len(inboxes) == 1
+
+
+async def test_inbox_task_can_be_filed_into_a_project_and_back(
+    client: AsyncClient,
+) -> None:
+    """Filing a 临时任务 is a plain parent change, and it can be undone."""
+
+    token, _ = await register_user(client, "inbox_task_move")
+    captured = await client.post(
+        "/api/v1/tasks",
+        headers=auth_header(token),
+        json={"title": "待归类", "node_type": "TASK", "parent_id": None},
+    )
+    assert captured.status_code == 201
+    inbox_id = captured.json()["parent_id"]
 
     project, module, _ = await create_structured_task(client, token, "正式任务")
-
     filed = await client.patch(
-        f"/api/v1/tasks/{created['id']}",
+        f"/api/v1/tasks/{captured.json()['id']}",
         headers=auth_header(token),
         json={"parent_id": module["id"]},
     )
     assert filed.status_code == 200
     assert filed.json()["parent_id"] == module["id"]
 
-    # Its time now rolls up into the module and the project above it.
     listing = await client.get("/api/v1/tasks", headers=auth_header(token))
     by_id = {task["id"]: task for task in listing.json()}
-    assert by_id[module["id"]]["task_count"] >= 1
     assert by_id[project["id"]]["task_count"] >= 1
 
-    # Filing it back out again returns it to the unfiled archive.
-    unfiled_again = await client.patch(
-        f"/api/v1/tasks/{created['id']}",
+    # Sending it back with no parent returns it to the same holding project.
+    unfiled = await client.patch(
+        f"/api/v1/tasks/{captured.json()['id']}",
         headers=auth_header(token),
         json={"parent_id": None},
     )
-    assert unfiled_again.status_code == 200
-    assert unfiled_again.json()["parent_id"] is None
+    assert unfiled.status_code == 200
+    assert unfiled.json()["parent_id"] == inbox_id
 
 
-async def test_only_executable_leaves_may_sit_at_the_top_level(
-    client: AsyncClient,
-) -> None:
-    """Containers still need a parent, and an unfiled task stays a leaf."""
+async def test_containers_still_require_a_parent(client: AsyncClient) -> None:
+    """Only executable tasks get the 临时任务 fallback; modules do not."""
 
-    token, _ = await register_user(client, "unfiled_task_rules")
+    token, _ = await register_user(client, "container_parent_rule")
     orphan_module = await client.post(
         "/api/v1/tasks",
         headers=auth_header(token),
@@ -685,34 +720,6 @@ async def test_only_executable_leaves_may_sit_at_the_top_level(
     )
     assert orphan_module.status_code == 400
     assert orphan_module.json()["detail"] == "Module nodes require a parent"
-
-    _, module, task = await create_structured_task(client, token, "带子任务的任务")
-    subtask = await client.post(
-        "/api/v1/tasks",
-        headers=auth_header(token),
-        json={
-            "title": "子任务",
-            "node_type": "TASK",
-            "parent_id": task["id"],
-            "estimated_seconds": 600,
-        },
-    )
-    assert subtask.status_code == 201
-
-    # A subtask under an unfiled task would have no project above it at all.
-    rejected = await client.patch(
-        f"/api/v1/tasks/{task['id']}",
-        headers=auth_header(token),
-        json={"parent_id": None},
-    )
-    assert rejected.status_code == 400
-    assert rejected.json()["detail"] == "Only leaf tasks can be left unfiled"
-
-    still_filed = await client.get(
-        f"/api/v1/tasks/{task['id']}",
-        headers=auth_header(token),
-    )
-    assert still_filed.json()["parent_id"] == module["id"]
 
 
 async def test_unfiled_task_scheduled_today_reaches_the_daily_plan(

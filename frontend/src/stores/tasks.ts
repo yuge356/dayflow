@@ -15,6 +15,7 @@ import {
 } from '@/services/offline-sync'
 import { taskService } from '@/services/tasks'
 import { useTimerStore } from '@/stores/timer'
+import { isInboxProject } from '@/utils/task-filing'
 import type {
   Task,
   TaskBulkApplyPayload,
@@ -40,9 +41,18 @@ function compareTasks(left: Task, right: Task): number {
   return left.created_at.localeCompare(right.created_at)
 }
 
-/** A task captured without a project above it (see the `unfiledTasks` getter). */
-export function isUnfiledTask(task: Pick<Task, 'node_type' | 'parent_id'>): boolean {
-  return task.node_type === 'TASK' && task.parent_id === null
+/**
+ * A task that is still waiting to be filed. That means one sitting in the
+ * 临时任务 holding project, and also one created locally a moment ago: the
+ * browser captures it with no parent and the server answers with the holding
+ * project, so both shapes are the same thing to the user.
+ */
+export function isUnfiledTask(
+  task: Pick<Task, 'node_type' | 'parent_id'>,
+  inboxProjectId: string | null,
+): boolean {
+  if (task.node_type !== 'TASK') return false
+  return task.parent_id === null || task.parent_id === inboxProjectId
 }
 
 function budgetLevel(estimatedSeconds: number, actualSeconds: number): Task['budget_level'] {
@@ -197,22 +207,37 @@ export const useTaskStore = defineStore('tasks', {
       return roots
     },
 
-    /**
-     * Roots that represent a project (or a node orphaned by a broken parent
-     * chain). Unfiled tasks are deliberately left out: they are listed on
-     * their own instead of masquerading as projects.
-     */
-    projectTree(): TaskNode[] {
-      return (this.tree as TaskNode[]).filter((node) => !isUnfiledTask(node))
+    /** The holding project's id, once the server has created it. */
+    inboxProjectId(state): string | null {
+      return state.items.find(isInboxProject)?.id ?? null
     },
 
     /**
-     * Quick "临时任务" that have no project above them yet. They are ordinary
-     * executable tasks — timeable, schedulable, countable — waiting to be
-     * filed under a project, which is a plain `parent_id` update.
+     * Roots that represent a project the user made (or a node orphaned by a
+     * broken parent chain). The 临时任务 holding project and the tasks inside
+     * it are left out: they are listed on their own instead.
+     */
+    projectTree(): TaskNode[] {
+      const inboxId = this.inboxProjectId as string | null
+      return (this.tree as TaskNode[]).filter(
+        (node) => !isInboxProject(node) && !isUnfiledTask(node, inboxId),
+      )
+    },
+
+    /**
+     * Quick "临时任务" waiting to be filed. They are ordinary executable tasks
+     * — timeable, schedulable, countable — and filing one under a project is
+     * a plain `parent_id` update.
      */
     unfiledTasks(): TaskNode[] {
-      return (this.tree as TaskNode[]).filter(isUnfiledTask)
+      const inboxId = this.inboxProjectId as string | null
+      const held = (this.tree as TaskNode[]).find(
+        (node) => node.id === inboxId,
+      )?.children
+      const loose = (this.tree as TaskNode[]).filter((node) =>
+        isUnfiledTask(node, inboxId),
+      )
+      return [...(held ?? []), ...loose]
     },
   },
 

@@ -1,4 +1,5 @@
 import type { Task } from '@/types/task'
+import { isInboxProject } from './task-filing'
 
 export function projectPrefixedTaskTitle(task: Task, tasks: Task[]): string {
   if (task.node_type === 'PROJECT') return task.title
@@ -11,6 +12,8 @@ export function projectPrefixedTaskTitle(task: Task, tasks: Task[]): string {
     const parent: Task | undefined = tasksById.get(current.parent_id)
     if (!parent) break
     if (parent.node_type === 'PROJECT') {
+      // 临时任务 is a holding area, not a project the user named.
+      if (isInboxProject(parent)) return task.title
       return `${parent.title}/${task.title}`.slice(0, 200)
     }
     current = parent

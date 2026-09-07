@@ -17,7 +17,11 @@ from app.schemas.daily_plan import (
     DailyPlanResponse,
 )
 from app.services.analytics import resolve_timezone
-from app.services.tasks import effective_session_duration, normalize_utc
+from app.services.tasks import (
+    INBOX_PROJECT_TITLE,
+    effective_session_duration,
+    normalize_utc,
+)
 
 
 def project_prefixed_task_title(task: Task, tasks_by_id: dict[UUID, Task]) -> str:
@@ -33,6 +37,10 @@ def project_prefixed_task_title(task: Task, tasks_by_id: dict[UUID, Task]) -> st
         if parent is None:
             break
         if parent.node_type == TaskNodeType.PROJECT:
+            # 临时任务 is a holding area, not a project the user named, so its
+            # tasks keep their plain title in the day's snapshot.
+            if parent.title == INBOX_PROJECT_TITLE:
+                return task.title
             return f"{parent.title}/{task.title}"[:200]
         current = parent
     return task.title

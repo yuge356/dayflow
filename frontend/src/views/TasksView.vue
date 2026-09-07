@@ -7,10 +7,12 @@
         <p>按“项目 → 模块 → 任务”组织学习内容；容器负责管理，任务负责执行。</p>
       </section>
 
-      <div v-if="!tasks.online || tasks.pendingCount > 0" class="sync-banner">
-        <strong>{{ tasks.online ? '等待同步' : '当前离线' }}</strong>
-        <span>{{ tasks.pendingCount }} 条任务或计划变更已安全保存在本机。</span>
-      </div>
+      <SyncStatusBanner
+        :pending-count="tasks.pendingCount"
+        :failed-count="tasks.failedCount"
+        :online="tasks.online"
+        @repaired="reloadAfterRepair"
+      />
 
       <section class="task-workspace">
         <div class="task-list-panel">
@@ -444,6 +446,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
 import FormMessage from '@/components/FormMessage.vue'
+import SyncStatusBanner from '@/components/SyncStatusBanner.vue'
 import HintIcon from '@/components/HintIcon.vue'
 import ProjectTemplateLibrary from '@/components/tasks/ProjectTemplateLibrary.vue'
 import TaskEditor from '@/components/tasks/TaskEditor.vue'
@@ -574,6 +577,16 @@ async function fileUnfiledTask(task: Task, parentId: string): Promise<void> {
       })
     }
     actionMessage.value = `已把“${task.title}”归入${target ? `“${target.name}”` : '所选项目'}。`
+  } catch (error) {
+    loadError.value = getApiErrorMessage(error)
+  }
+}
+
+/** Pull fresh data after the user retried or discarded a quarantined write. */
+async function reloadAfterRepair(): Promise<void> {
+  loadError.value = ''
+  try {
+    await tasks.load({ silent: true })
   } catch (error) {
     loadError.value = getApiErrorMessage(error)
   }

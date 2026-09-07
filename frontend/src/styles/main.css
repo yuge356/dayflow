@@ -4629,6 +4629,64 @@ body.task-editor-modal-open {
   color: var(--danger);
 }
 
+/* The blocked-sync banner expands into the actual server reasons: a count
+   alone left "请检查数据后重试" with nothing the user could go and check. */
+.sync-issues {
+  display: block;
+}
+
+.sync-issues__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.sync-issues__list {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sync-issues__list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 65%);
+}
+
+.sync-issues__list li > div {
+  display: grid;
+  flex: 1 1 240px;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sync-issues__list strong {
+  font-size: 13px;
+}
+
+.sync-issues__list span {
+  color: #8a4258;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sync-issues__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
 /* ---------- 计时工作区（今日计划内） ---------- */
 
 .timer-page {

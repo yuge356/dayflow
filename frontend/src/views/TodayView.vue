@@ -11,16 +11,12 @@
 
       <FormMessage :message="errorMessage || timer.syncError" />
 
-      <div v-if="!daily.online || daily.pendingCount > 0" class="sync-banner">
-        <strong>{{ daily.online ? '等待同步' : '当前离线' }}</strong>
-        <span>{{ daily.pendingCount }} 条任务或计划变更已保存在本机。</span>
-      </div>
-      <div v-if="daily.failedCount > 0" class="sync-banner sync-banner--error">
-        <strong>同步受阻</strong>
-        <span>
-          {{ daily.failedCount }} 条变更被服务器拒绝，仍保留在本机，请检查数据后重试。
-        </span>
-      </div>
+      <SyncStatusBanner
+        :pending-count="daily.pendingCount"
+        :failed-count="daily.failedCount"
+        :online="daily.online"
+        @repaired="reloadAfterRepair"
+      />
 
       <div class="today-focus-grid">
         <section
@@ -468,6 +464,7 @@ import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue
 
 import AppShell from '@/components/AppShell.vue'
 import FormMessage from '@/components/FormMessage.vue'
+import SyncStatusBanner from '@/components/SyncStatusBanner.vue'
 import GanttChart from '@/components/GanttChart.vue'
 import { analyticsService } from '@/services/analytics'
 import { useAuthStore } from '@/stores/auth'
@@ -1251,6 +1248,19 @@ function startItemTitle(item: DailyPlanItem): string {
   return item.actual_seconds > 0
     ? `从已计时的 ${formatDuration(item.actual_seconds)} 继续`
     : '开始该任务的计时'
+}
+
+/** Pull fresh data after the user retried or discarded a quarantined write. */
+async function reloadAfterRepair(): Promise<void> {
+  errorMessage.value = ''
+  try {
+    await Promise.all([
+      tasks.load({ silent: true }),
+      daily.load(todayDate.value, { silent: true }),
+    ])
+  } catch (error) {
+    errorMessage.value = getApiErrorMessage(error)
+  }
 }
 
 async function runAction(action: () => Promise<void>): Promise<void> {

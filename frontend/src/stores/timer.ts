@@ -271,6 +271,24 @@ async function recoverInterruptedRunningTimer(
   return recovered
 }
 
+/**
+ * Whether `GET /sessions/active` really returned a session. A deployment that
+ * misroutes `/api` answers 200 with an HTML page; adopting that produced an
+ * "active" timer whose every field was undefined, which reached the screen as
+ * a phantom task counting `NaN:NaN:NaN` and was then written to IndexedDB.
+ */
+function isUsableServerSession(session: StudySession | null): session is StudySession {
+  if (!session || typeof session !== 'object') return false
+  return (
+    typeof session.id === 'string' &&
+    typeof session.client_id === 'string' &&
+    (session.status === 'RUNNING' || session.status === 'PAUSED') &&
+    Number.isFinite(session.duration_seconds) &&
+    Number.isFinite(Date.parse(session.started_at)) &&
+    Number.isFinite(Date.parse(session.client_updated_at))
+  )
+}
+
 function isMissingDailyPlanItemError(error: unknown): boolean {
   return (
     axios.isAxiosError<{ detail?: string }>(error) &&
@@ -489,7 +507,7 @@ export const useTimerStore = defineStore('timer', {
           }
           if (!this.active && this.online) {
             const serverActive = await sessionService.active()
-            if (serverActive) {
+            if (isUsableServerSession(serverActive)) {
               this.active = {
                 id: ownerId,
                 owner_id: ownerId,

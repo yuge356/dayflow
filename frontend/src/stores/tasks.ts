@@ -8,6 +8,7 @@ import {
   saveCachedTasks,
 } from '@/db/local'
 import {
+  getFailedSyncCount,
   getPendingOperations,
   isNetworkError,
   syncPendingChanges,
@@ -30,6 +31,7 @@ interface TaskState {
   saving: boolean
   online: boolean
   pendingCount: number
+  failedCount: number
   listenerBound: boolean
 }
 
@@ -89,6 +91,7 @@ export const useTaskStore = defineStore('tasks', {
     saving: false,
     online: navigator.onLine,
     pendingCount: 0,
+    failedCount: 0,
     listenerBound: false,
   }),
 
@@ -340,6 +343,7 @@ export const useTaskStore = defineStore('tasks', {
           const sequence = ++listSequence
           try {
             this.pendingCount = await syncPendingChanges(this.ownerId)
+            this.failedCount = await getFailedSyncCount(this.ownerId)
             const serverItems = await taskService.list()
             const merged = await this.mergeServerItems(serverItems, sequence)
             if (sequence === listSequence) this.items = merged
@@ -368,6 +372,7 @@ export const useTaskStore = defineStore('tasks', {
       }
       try {
         this.pendingCount = await syncPendingChanges(this.ownerId)
+        this.failedCount = await getFailedSyncCount(this.ownerId)
         await apply()
       } catch (error) {
         if (isNetworkError(error)) {

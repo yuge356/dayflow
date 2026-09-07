@@ -52,10 +52,32 @@ export async function getClientId(): Promise<string> {
   return value
 }
 
+/**
+ * A stored timer state is only usable if it still carries a whole snapshot.
+ * A truncated record — an interrupted unload write, or a row left by an older
+ * version of the app — otherwise reaches the timer face as `NaN:NaN:NaN`
+ * along with working pause and finish buttons for a session that is not there.
+ */
+function isUsableTimerState(state: LocalTimerState | undefined): state is LocalTimerState {
+  if (!state || typeof state.session_id !== 'string' || !state.snapshot) return false
+  const { status, started_at: startedAt, client_updated_at: updatedAt } = state.snapshot
+  return (
+    (status === 'RUNNING' || status === 'PAUSED' || status === 'COMPLETED') &&
+    Number.isFinite(state.snapshot.duration_seconds) &&
+    Number.isFinite(Date.parse(startedAt)) &&
+    Number.isFinite(Date.parse(updatedAt))
+  )
+}
+
 export async function loadActiveTimer(
   ownerId: string,
 ): Promise<LocalTimerState | undefined> {
-  return localDb.timerStates.get(ownerId)
+  const stored = await localDb.timerStates.get(ownerId)
+  if (stored && !isUsableTimerState(stored)) {
+    await localDb.timerStates.delete(ownerId)
+    return undefined
+  }
+  return stored
 }
 
 export async function saveActiveTimer(

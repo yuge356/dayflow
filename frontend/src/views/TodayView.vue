@@ -1026,32 +1026,49 @@ async function loadTodayCharts(): Promise<void> {
   const calendarRequest = ++calendarRequestId
   const distributionRequest = ++distributionRequestId
   const ganttRequest = ++ganttRequestId
-  calendarLoading.value = true
-  distributionLoading.value = true
-  ganttLoading.value = true
+  const params = {
+    calendarFrom: `${monthPrefix}-01`,
+    calendarTo: `${monthPrefix}-${String(lastDay).padStart(2, '0')}`,
+    focusDay: focusDate.value,
+    ganttFrom: ganttRangeStart(),
+    ganttTo: todayDate.value,
+  }
+  const cacheKey = Object.values(params).join('|')
+
+  // Paint last visit's charts straight away. A remote round trip took long
+  // enough that the calendar, the focus bars and the progress chart all sat
+  // empty on every arrival, even though the numbers rarely move between
+  // visits; the fresh response replaces them in place below.
+  const cached = analyticsService.peekTodayOverview(cacheKey)
+  if (cached) {
+    calendarTrend.value = cached.calendar_trend
+    hourlyTrend.value = cached.hourly_focus
+    ganttSeries.value = cached.task_daily.tasks
+  }
+
+  calendarLoading.value = !cached
+  distributionLoading.value = !cached
+  ganttLoading.value = !cached
   calendarError.value = ''
   distributionError.value = ''
   ganttError.value = ''
   try {
-    const overview = await analyticsService.todayOverview({
-      calendarFrom: `${monthPrefix}-01`,
-      calendarTo: `${monthPrefix}-${String(lastDay).padStart(2, '0')}`,
-      focusDay: focusDate.value,
-      ganttFrom: ganttRangeStart(),
-      ganttTo: todayDate.value,
-    })
+    const overview = await analyticsService.todayOverview(params)
+    analyticsService.storeTodayOverview(cacheKey, overview)
     if (calendarRequest === calendarRequestId) calendarTrend.value = overview.calendar_trend
     if (distributionRequest === distributionRequestId) hourlyTrend.value = overview.hourly_focus
     if (ganttRequest === ganttRequestId) ganttSeries.value = overview.task_daily.tasks
   } catch (error) {
+    // Cached charts stay on screen: a failed refresh is not a reason to blank
+    // panels the user could still read.
     const message = getApiErrorMessage(error)
     if (calendarRequest === calendarRequestId) calendarError.value = message
     if (distributionRequest === distributionRequestId) {
-      hourlyTrend.value = null
+      if (!cached) hourlyTrend.value = null
       distributionError.value = message
     }
     if (ganttRequest === ganttRequestId) {
-      ganttSeries.value = []
+      if (!cached) ganttSeries.value = []
       ganttError.value = message
     }
   } finally {

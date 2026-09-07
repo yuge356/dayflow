@@ -46,10 +46,6 @@
           </RouterLink>
           <a class="jr-quiet jr-quiet--arrow" href="#preview">看看 DayFlow</a>
         </div>
-        <p class="jr-scroll-hint jr-rise" style="--i: 5" aria-hidden="true">
-          <span>向下滚动</span>
-          <i />
-        </p>
       </div>
     </section>
 
@@ -99,10 +95,11 @@
               <span>共 {{ lessons.length }} 节</span>
             </p>
 
-            <div class="jr-track" aria-hidden="true">
-              <span class="jr-track__line" />
-              <span class="jr-track__fill" :style="{ transform: `scaleY(${progress})` }" />
-            </div>
+            <div
+              class="jr-beam"
+              aria-hidden="true"
+              :style="{ '--lit': streamProgress }"
+            />
 
             <ul class="jr-cards">
               <li
@@ -147,6 +144,36 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
             </RouterLink>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="jr-templates">
+      <div class="jr-shell">
+        <header :ref="registerReveal" class="jr-head jr-slide">
+          <p class="jr-kicker">从模板开始</p>
+          <h2>三种计划，开箱即用</h2>
+        </header>
+
+        <div class="jr-templates__grid">
+          <article
+            v-for="(template, index) in templates"
+            :key="template.id"
+            :ref="registerReveal"
+            class="jr-template jr-slide"
+            :style="{ '--i': index, '--accent': template.accent }"
+          >
+            <span class="jr-template__badge" aria-hidden="true">{{ template.icon }}</span>
+            <h3>{{ template.name }}</h3>
+            <p>{{ template.text }}</p>
+            <ul class="jr-template__outline">
+              <li v-for="step in template.outline" :key="step">
+                <i aria-hidden="true" />
+                {{ step }}
+              </li>
+            </ul>
+            <p class="jr-template__foot">{{ template.meta }}</p>
+          </article>
         </div>
       </div>
     </section>
@@ -269,6 +296,36 @@ const shots = [
     title: '趋势、分布与预算偏差',
     image: '/welcome-analytics.png',
     alt: 'DayFlow 时间统计与趋势分析界面',
+  },
+] as const
+
+const templates = [
+  {
+    id: 'study',
+    name: '学习课程',
+    icon: '📘',
+    accent: '#5b8cff',
+    text: '把一门课拆成章节与练习，按周推进。',
+    outline: ['课程大纲', '每章任务', '练习与复盘'],
+    meta: '适合网课、教材、语言学习',
+  },
+  {
+    id: 'exam',
+    name: '考试备考',
+    icon: '🎯',
+    accent: '#a58cff',
+    text: '倒推考试日期，安排复习轮次与模考。',
+    outline: ['考纲拆解', '三轮复习', '真题与模考'],
+    meta: '适合升学、证书、资格考试',
+  },
+  {
+    id: 'project',
+    name: '项目推进',
+    icon: '🚀',
+    accent: '#47d7b0',
+    text: '按里程碑组织模块，跟踪投入与偏差。',
+    outline: ['里程碑', '模块拆分', '交付与验收'],
+    meta: '适合毕设、副业、团队项目',
   },
 ] as const
 

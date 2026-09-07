@@ -1,233 +1,190 @@
 <template>
-  <main class="hx" :class="{ 'hx--still': reducedMotion, 'hx--reveal': revealArmed }">
-    <!-- Volumetric field: a few very large liquid-glass spheres drifting far
-         behind everything else. Decorative, transform-only, never in the way. -->
-    <div class="hx-field" aria-hidden="true">
-      <span class="hx-sphere hx-sphere--one" />
-      <span class="hx-sphere hx-sphere--two" />
-      <span class="hx-sphere hx-sphere--three" />
-      <span class="hx-sphere hx-sphere--four" />
-      <span class="hx-aurora" />
+  <main class="jr" :class="{ 'jr--still': reducedMotion, 'jr--reveal': revealArmed }">
+    <!-- Soft blue / mint / lavender wash. Decorative, transform-only. -->
+    <div class="jr-wash" aria-hidden="true">
+      <span class="jr-glow jr-glow--blue" />
+      <span class="jr-glow jr-glow--mint" />
+      <span class="jr-glow jr-glow--lavender" />
     </div>
 
-    <header class="hx-nav" :class="{ 'is-stuck': scrolled }">
-      <div class="hx-shell hx-nav__inner">
+    <header class="jr-nav" :class="{ 'is-stuck': scrolled }">
+      <div class="jr-shell jr-nav__inner">
         <AppLogo />
-        <nav class="hx-nav__actions" aria-label="账户入口">
-          <RouterLink class="hx-quiet" :to="{ name: 'login' }">登录</RouterLink>
-          <RouterLink class="hx-cta hx-cta--sm" :to="{ name: 'login', query: { mode: 'register' } }">
+        <nav class="jr-nav__actions" aria-label="账户入口">
+          <RouterLink class="jr-quiet" :to="{ name: 'login' }">登录</RouterLink>
+          <RouterLink class="jr-cta jr-cta--sm" :to="{ name: 'login', query: { mode: 'register' } }">
             免费开始
           </RouterLink>
         </nav>
       </div>
     </header>
 
-    <section class="hx-hero">
-      <div class="hx-shell hx-hero__inner">
-        <div class="hx-copy">
-          <p class="hx-eyebrow hx-rise" style="--i: 0">
-            <span class="hx-live" aria-hidden="true" />
-            正在运转的生产力网络
-          </p>
-          <h1 class="hx-title">
-            <span class="hx-rise" style="--i: 1">每一分钟</span>
-            <span class="hx-rise" style="--i: 2">都在推进项目</span>
-          </h1>
-          <p class="hx-lead hx-rise" style="--i: 3">
-            项目、任务与专注计时连成一张网。<br />
-            时间在其中流动，进度随之向前。
-          </p>
-          <div class="hx-actions hx-rise" style="--i: 4">
-            <RouterLink
-              class="hx-cta hx-cta--lg"
-              :style="magnetStyle"
-              :to="{ name: 'login', query: { mode: 'register' } }"
-              @pointermove.passive="trackMagnet"
-              @pointerleave="resetMagnet"
-            >
-              <span>免费开始</span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
-            </RouterLink>
-            <a class="hx-quiet hx-quiet--arrow" href="#preview">看看 DayFlow</a>
+    <section class="jr-hero">
+      <div class="jr-shell jr-hero__inner">
+        <p class="jr-eyebrow jr-rise" style="--i: 0">
+          <span class="jr-live" aria-hidden="true" />
+          学习旅程 · 一路累积
+        </p>
+        <h1 class="jr-title">
+          <span class="jr-rise" style="--i: 1">一节一节学下去</span>
+          <span class="jr-rise" style="--i: 2">整个计划就完成了</span>
+        </h1>
+        <p class="jr-lead jr-rise" style="--i: 3">
+          每完成一项，进度就往前一格。<br />
+          往下滚动，看你的学习计划一路走到 100%。
+        </p>
+        <div class="jr-actions jr-rise" style="--i: 4">
+          <RouterLink
+            class="jr-cta jr-cta--lg"
+            :style="magnetStyle"
+            :to="{ name: 'login', query: { mode: 'register' } }"
+            @pointermove.passive="trackMagnet"
+            @pointerleave="resetMagnet"
+          >
+            <span>免费开始</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+          </RouterLink>
+          <a class="jr-quiet jr-quiet--arrow" href="#preview">看看 DayFlow</a>
+        </div>
+        <p class="jr-scroll-hint jr-rise" style="--i: 5" aria-hidden="true">
+          <span>向下滚动</span>
+          <i />
+        </p>
+      </div>
+    </section>
+
+    <!-- The journey: a tall track whose stage stays pinned, so scrolling
+         scrubs the animation instead of merely moving past it. -->
+    <section ref="journeyEl" class="jr-journey" :aria-label="journeyLabel">
+      <div class="jr-stage">
+        <div class="jr-shell jr-stage__inner">
+          <aside class="jr-summary">
+            <p class="jr-kicker">学习计划</p>
+            <h2>机器学习入门</h2>
+
+            <div class="jr-ring" role="img" :aria-label="`完成度 ${percent}%`">
+              <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" class="jr-ring__track" />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="52"
+                  class="jr-ring__value"
+                  pathLength="1"
+                  :style="{ strokeDashoffset: 1 - progress }"
+                />
+              </svg>
+              <div class="jr-ring__center">
+                <strong>{{ percent }}<i>%</i></strong>
+                <span>已完成</span>
+              </div>
+            </div>
+
+            <dl class="jr-summary__stats">
+              <div>
+                <dt>已完成</dt>
+                <dd>{{ completedCount }} / {{ lessons.length }} 节</dd>
+              </div>
+              <div>
+                <dt>累计投入</dt>
+                <dd>{{ investedHours }} 小时</dd>
+              </div>
+            </dl>
+          </aside>
+
+          <div class="jr-stream">
+            <p class="jr-stream__label">
+              <span :class="{ 'is-on': completedCount > 0 }">已完成 {{ completedCount }}</span>
+              <span class="jr-stream__divider" aria-hidden="true" />
+              <span>共 {{ lessons.length }} 节</span>
+            </p>
+
+            <div class="jr-track" aria-hidden="true">
+              <span class="jr-track__line" />
+              <span class="jr-track__fill" :style="{ transform: `scaleY(${progress})` }" />
+            </div>
+
+            <ul class="jr-cards">
+              <li
+                v-for="(lesson, index) in lessons"
+                :key="lesson.id"
+                class="jr-card"
+                :class="cardState(index)"
+                :style="cardStyle(index)"
+              >
+                <span class="jr-card__node" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M5 12.5 10 17l9-10" pathLength="1" /></svg>
+                </span>
+                <div class="jr-card__body">
+                  <p class="jr-card__meta">
+                    <span>第 {{ index + 1 }} 节</span>
+                    <span>{{ lesson.hours }}h</span>
+                  </p>
+                  <h3>{{ lesson.title }}</h3>
+                  <div class="jr-card__bar">
+                    <i :style="{ transform: `scaleX(${lessonFill(index)})` }" />
+                  </div>
+                  <p class="jr-card__foot">
+                    <span>{{ Math.round(lessonFill(index) * 100) }}%</span>
+                    <span>{{ lesson.topic }}</span>
+                  </p>
+                </div>
+              </li>
+            </ul>
           </div>
         </div>
 
-        <!-- The living network. Cards, links, particles and the timeline all
-             live in one viewBox, so the whole scene scales as a single piece
-             and the particles can never drift off the curves they ride. -->
-        <div class="hx-stage" role="img" :aria-label="stageLabel">
-          <svg class="hx-net" viewBox="0 0 980 620" :style="parallaxStyle">
-            <defs>
-              <linearGradient id="hxFlow" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#4A7DFF" stop-opacity="0" />
-                <stop offset="42%" stop-color="#50E3FF" stop-opacity=".85" />
-                <stop offset="100%" stop-color="#7CFFD0" stop-opacity=".25" />
-              </linearGradient>
-              <linearGradient id="hxProgress" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#4A7DFF" />
-                <stop offset="55%" stop-color="#50E3FF" />
-                <stop offset="100%" stop-color="#7CFFD0" />
-              </linearGradient>
-              <linearGradient id="hxRing" x1="0" y1="1" x2="1" y2="0">
-                <stop offset="0%" stop-color="#B9A4FF" />
-                <stop offset="50%" stop-color="#50E3FF" />
-                <stop offset="100%" stop-color="#7CFFD0" />
-              </linearGradient>
-              <radialGradient id="hxHalo">
-                <stop offset="0%" stop-color="#50E3FF" stop-opacity=".38" />
-                <stop offset="100%" stop-color="#50E3FF" stop-opacity="0" />
-              </radialGradient>
-            </defs>
-
-            <!-- Long-range planning, sitting furthest back. -->
-            <g class="hx-timeline">
-              <g v-for="(mark, index) in timeline" :key="mark.label" :style="{ '--i': index }">
-                <line :x1="mark.x" y1="66" :x2="mark.x" y2="566" class="hx-timeline__rule" />
-                <text :x="mark.x" y="46" class="hx-timeline__label">{{ mark.label }}</text>
-              </g>
-            </g>
-
-            <g class="hx-links">
-              <path v-for="link in links" :key="link.id" :d="link.d" class="hx-link" />
-              <path
-                v-for="link in links"
-                :key="`lit-${link.id}`"
-                :d="link.d"
-                class="hx-link-lit"
-                :class="{ 'is-lit': isDone(link.to) }"
-                pathLength="1"
-              />
-            </g>
-
-            <!-- Time, made visible: light travelling the same curves. -->
-            <g class="hx-particles">
-              <circle
-                v-for="dot in particles"
-                :key="dot.id"
-                r="3"
-                class="hx-dot"
-                :style="{
-                  offsetPath: `path('${dot.d}')`,
-                  animationDelay: `${dot.delay}s`,
-                  animationDuration: `${dot.duration}s`,
-                }"
-              />
-            </g>
-
-            <!-- The focus session: the centre of gravity for everything else. -->
-            <g class="hx-focus" :class="{ 'is-running': true }">
-              <circle cx="152" cy="310" r="128" class="hx-focus__halo" />
-              <rect x="52" y="232" width="200" height="156" rx="26" class="hx-card__glass" />
-              <rect x="52" y="232" width="200" height="156" rx="26" class="hx-focus__sheen" />
-
-              <circle cx="92" cy="292" r="22" class="hx-focus__track" />
-              <circle cx="92" cy="292" r="22" class="hx-focus__ring" pathLength="1" />
-
-              <text x="126" y="286" class="hx-focus__kicker">专注中</text>
-              <text x="126" y="304" class="hx-focus__state">深度工作</text>
-
-              <text x="72" y="352" class="hx-focus__clock">{{ focusClock }}</text>
-              <text x="72" y="372" class="hx-focus__meta">本次专注 · 界面原型</text>
-            </g>
-
-            <g
-              v-for="node in nodes"
-              :key="node.id"
-              class="hx-node"
-              :class="[`hx-node--${node.kind}`, { 'is-done': isDone(node.id) }]"
-            >
-              <rect
-                :x="node.x"
-                :y="node.y"
-                :width="node.w"
-                :height="node.h"
-                rx="20"
-                class="hx-card__glass"
-              />
-
-              <text :x="node.x + 18" :y="node.y + 26" class="hx-node__kind">{{ node.kind === 'milestone' ? '里程碑' : node.kind === 'project' ? '项目' : '任务' }}</text>
-              <text :x="node.x + 18" :y="node.y + 50" class="hx-node__title">{{ node.title }}</text>
-
-              <text :x="node.x + 18" :y="node.y + 74" class="hx-node__hours">
-                <tspan class="hx-node__done">{{ isDone(node.id) ? node.total : node.done }}</tspan>
-                <tspan class="hx-node__total"> / {{ node.total }}h</tspan>
-              </text>
-
-              <circle
-                :cx="node.x + node.w - 24"
-                :cy="node.y + 22"
-                r="4.5"
-                class="hx-node__status"
-              />
-
-              <rect
-                :x="node.x + 18"
-                :y="node.y + node.h - 20"
-                :width="node.w - 36"
-                height="5"
-                rx="2.5"
-                class="hx-node__track"
-              />
-              <!-- Full width, scaled: a transform animates, a width does not. -->
-              <rect
-                :x="node.x + 18"
-                :y="node.y + node.h - 20"
-                :width="node.w - 36"
-                height="5"
-                rx="2.5"
-                class="hx-node__bar"
-                :style="{ transform: `scaleX(${isDone(node.id) ? 1 : node.done / node.total})` }"
-              />
-
-              <!-- Revealed on hover, so the resting state stays uncluttered. -->
-              <text :x="node.x + 18" :y="node.y + node.h + 20" class="hx-node__detail">
-                {{ node.detail }}
-              </text>
-            </g>
-          </svg>
-
-          <p class="hx-stage__note" aria-live="polite">
-            <span class="hx-live" aria-hidden="true" />
-            {{ stageNote }}
-          </p>
+        <!-- Arrives only at the end of the track. -->
+        <div class="jr-finale" :class="{ 'is-on': finale > 0 }" :style="{ opacity: finale }">
+          <div class="jr-finale__card" :style="{ transform: `scale(${0.94 + finale * 0.06})` }">
+            <span class="jr-finale__spark" aria-hidden="true" />
+            <p class="jr-kicker">学习路线完成</p>
+            <strong>100%</strong>
+            <h2>机器学习入门 · 全部完成</h2>
+            <p>{{ lessons.length }} 节课 · 累计 {{ totalHours }} 小时，全部由计时记录累积而来。</p>
+            <RouterLink class="jr-cta jr-cta--lg" :to="{ name: 'login', query: { mode: 'register' } }">
+              <span>开始你的计划</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+            </RouterLink>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="hx-band">
-      <div class="hx-shell">
+    <section class="jr-band">
+      <div class="jr-shell">
         <article
           v-for="(item, index) in pillars"
           :key="item.title"
           :ref="registerReveal"
-          class="hx-pillar hx-slide"
+          class="jr-pillar jr-slide"
           :style="{ '--i': index }"
         >
-          <span class="hx-pillar__dot" aria-hidden="true" />
+          <span class="jr-pillar__dot" aria-hidden="true" />
           <h3>{{ item.title }}</h3>
           <p>{{ item.text }}</p>
         </article>
       </div>
     </section>
 
-    <section id="preview" class="hx-preview">
-      <div class="hx-shell">
-        <header :ref="registerReveal" class="hx-head hx-slide">
-          <p class="hx-kicker">产品一览</p>
+    <section id="preview" class="jr-preview">
+      <div class="jr-shell">
+        <header :ref="registerReveal" class="jr-head jr-slide">
+          <p class="jr-kicker">产品一览</p>
           <h2>三个界面，一条完整的时间线</h2>
         </header>
 
-        <div :ref="registerReveal" class="hx-preview__grid hx-slide">
-          <div class="hx-window">
-            <div class="hx-window__bar" aria-hidden="true">
+        <div :ref="registerReveal" class="jr-preview__grid jr-slide">
+          <div class="jr-window">
+            <div class="jr-window__bar" aria-hidden="true">
               <i /><i /><i />
               <span>{{ shots[activeShot]!.title }}</span>
             </div>
-            <div class="hx-window__frame">
+            <div class="jr-window__frame">
               <img
                 v-for="(shot, index) in shots"
                 :key="shot.id"
-                class="hx-window__shot"
+                class="jr-window__shot"
                 :class="{ 'is-active': activeShot === index }"
                 :src="shot.image"
                 :alt="shot.alt"
@@ -237,7 +194,7 @@
             </div>
           </div>
 
-          <ul class="hx-tabs">
+          <ul class="jr-tabs">
             <li v-for="(shot, index) in shots" :key="shot.id">
               <button
                 type="button"
@@ -247,7 +204,7 @@
               >
                 <strong>{{ shot.kicker }}</strong>
                 <span>{{ shot.title }}</span>
-                <i class="hx-tabs__timer" aria-hidden="true" />
+                <i class="jr-tabs__timer" aria-hidden="true" />
               </button>
             </li>
           </ul>
@@ -255,12 +212,12 @@
       </div>
     </section>
 
-    <section class="hx-closing">
-      <div class="hx-shell">
-        <div :ref="registerReveal" class="hx-closing__card hx-slide">
-          <h2>让今天的专注，落在项目上</h2>
+    <section class="jr-closing">
+      <div class="jr-shell">
+        <div :ref="registerReveal" class="jr-closing__card jr-slide">
+          <h2>让今天的专注，落在计划上</h2>
           <p>注册即用，数据存在你自己的空间里。</p>
-          <RouterLink class="hx-cta hx-cta--lg" :to="{ name: 'login', query: { mode: 'register' } }">
+          <RouterLink class="jr-cta jr-cta--lg" :to="{ name: 'login', query: { mode: 'register' } }">
             <span>免费开始</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
           </RouterLink>
@@ -268,8 +225,8 @@
       </div>
     </section>
 
-    <footer class="hx-footer">
-      <div class="hx-shell hx-footer__inner">
+    <footer class="jr-footer">
+      <div class="jr-shell jr-footer__inner">
         <AppLogo />
         <span>DayFlow · 让计划流动起来</span>
       </div>
@@ -316,95 +273,27 @@ const shots = [
 ] as const
 
 const pillars = [
-  { title: '结构清楚', text: '项目、模块、任务三层拆解，复杂计划也看得见边界。' },
-  { title: '时间可见', text: '专注计时自动归集到任务与当日清单，不用手动记账。' },
-  { title: '进度自证', text: '统计只认这里计到的时间，完成率不靠感觉。' },
+  { title: '一节一节推进', text: '把课程拆成可执行的小节，每节都有自己的计划用时。' },
+  { title: '时间自动累积', text: '专注计时归集到每节课，学过多久不用自己记。' },
+  { title: '进度看得见', text: '完成度只认真实计时，不靠感觉估算。' },
 ] as const
 
-const timeline = [
-  { label: '今天', x: 152 },
-  { label: '本周', x: 428 },
-  { label: '冲刺', x: 604 },
-  { label: '里程碑', x: 780 },
-  { label: '发布', x: 900 },
+const lessons = [
+  { id: 'basics', title: 'Python 基础语法', hours: 6, topic: '语言基础' },
+  { id: 'data', title: '数据结构与算法', hours: 10, topic: '编程基本功' },
+  { id: 'math', title: '线性代数复习', hours: 8, topic: '数学准备' },
+  { id: 'intro', title: '机器学习导论', hours: 12, topic: '核心概念' },
+  { id: 'nn', title: '神经网络实战', hours: 14, topic: '动手实践' },
+  { id: 'capstone', title: '毕业项目', hours: 10, topic: '综合应用' },
 ] as const
 
-type NodeKind = 'task' | 'project' | 'milestone'
+const totalHours = lessons.reduce((sum, lesson) => sum + lesson.hours, 0)
 
-interface NetNode {
-  id: string
-  kind: NodeKind
-  title: string
-  done: number
-  total: number
-  detail: string
-  x: number
-  y: number
-  w: number
-  h: number
-  /** Where this node sits in the progress sequence. */
-  order: number
-}
+/** Fraction of the track spent on the closing celebration. */
+const FINALE_SHARE = 0.16
 
-const nodes: NetNode[] = [
-  { id: 'task-a', kind: 'task', title: '界面原型', done: 6, total: 8, detail: '今日投入 2h 10m · 剩余 2h', x: 330, y: 92, w: 196, h: 112, order: 1 },
-  { id: 'task-b', kind: 'task', title: '数据同步', done: 14, total: 20, detail: '今日投入 1h 30m · 剩余 6h', x: 330, y: 404, w: 196, h: 112, order: 2 },
-  { id: 'proj-a', kind: 'project', title: '体验设计', done: 22, total: 30, detail: '4 项任务 · 本周 +8h', x: 580, y: 156, w: 186, h: 112, order: 3 },
-  { id: 'proj-b', kind: 'project', title: '数据能力', done: 18, total: 28, detail: '5 项任务 · 本周 +6h', x: 580, y: 348, w: 186, h: 112, order: 4 },
-  { id: 'launch', kind: 'milestone', title: '发布 1.0', done: 40, total: 58, detail: '预计 3 月 12 日达成', x: 812, y: 250, w: 150, h: 112, order: 5 },
-]
-
-const nodeById = new Map(nodes.map((node) => [node.id, node]))
-
-function edge(fromX: number, fromY: number, toX: number, toY: number): string {
-  const bend = Math.max(48, (toX - fromX) * 0.45)
-  return `M${fromX} ${fromY}C${fromX + bend} ${fromY}, ${toX - bend} ${toY}, ${toX} ${toY}`
-}
-
-function linkTo(toId: string, fromX: number, fromY: number) {
-  const to = nodeById.get(toId)!
-  return {
-    id: `focus-${toId}`,
-    to: toId,
-    d: edge(fromX, fromY, to.x, to.y + to.h / 2),
-  }
-}
-
-function linkBetween(fromId: string, toId: string) {
-  const from = nodeById.get(fromId)!
-  const to = nodeById.get(toId)!
-  return {
-    id: `${fromId}-${toId}`,
-    to: toId,
-    d: edge(from.x + from.w, from.y + from.h / 2, to.x, to.y + to.h / 2),
-  }
-}
-
-const links = [
-  linkTo('task-a', 252, 300),
-  linkTo('task-b', 252, 320),
-  linkBetween('task-a', 'proj-a'),
-  linkBetween('task-b', 'proj-b'),
-  linkBetween('proj-a', 'launch'),
-  linkBetween('proj-b', 'launch'),
-]
-
-const DOTS_PER_LINK = 3
-const particles = links.flatMap((link, linkIndex) =>
-  Array.from({ length: DOTS_PER_LINK }, (_, index) => ({
-    id: `${link.id}-${index}`,
-    d: link.d,
-    delay: Number((linkIndex * 0.42 + index * 1.5).toFixed(2)),
-    duration: 4.5 + (linkIndex % 3) * 0.5,
-  })),
-)
-
-const LAST_ORDER = 5
-const STEP_MS = 1500
-const HOLD_STEPS = 3
-
-const stageStep = ref(0)
-const focusSeconds = ref(45 * 60 + 23)
+const progress = ref(0)
+const stageHeight = ref(720)
 /**
  * Read before the first paint, so the page never renders its content and then
  * fades it out again. Nothing is hidden unless `revealArmed` is on, which only
@@ -417,45 +306,111 @@ const reducedMotion = ref(
 const revealArmed = ref(!reducedMotion.value)
 const scrolled = ref(false)
 const activeShot = ref(0)
+const journeyEl = ref<HTMLElement | null>(null)
 const revealTargets = new Set<Element>()
-const pointer = ref({ x: 0.5, y: 0.5, active: false })
 const magnet = ref({ x: 0, y: 0 })
 
-function isDone(nodeId: string): boolean {
-  const node = nodeById.get(nodeId)
-  return node ? stageStep.value >= node.order : false
+/** How far the lesson stream itself has run, ignoring the closing card. */
+const streamProgress = computed(() =>
+  Math.min(1, progress.value / (1 - FINALE_SHARE)),
+)
+
+/** The fractional lesson currently sitting in the middle of the stage. */
+const head = computed(() => streamProgress.value * lessons.length)
+
+/**
+ * Where the column sits, which is not the same as how far the head has run: a
+ * lesson stays parked in the centre while its bar fills, and only then slides
+ * up to let the next one in. Without the hold, a card drifted out of the
+ * centre while still only part-finished.
+ */
+const HOLD = 0.72
+const layoutHead = computed(() => {
+  const whole = Math.floor(head.value)
+  const frac = head.value - whole
+  return whole + (frac <= HOLD ? 0 : (frac - HOLD) / (1 - HOLD))
+})
+
+const percent = computed(() => Math.round(streamProgress.value * 100))
+
+const completedCount = computed(() =>
+  Math.min(lessons.length, Math.floor(head.value)),
+)
+
+const investedHours = computed(() => {
+  let total = 0
+  lessons.forEach((lesson, index) => {
+    total += lesson.hours * lessonFill(index)
+  })
+  return Math.round(total)
+})
+
+/** 0 until the stream is done, then eases the celebration in. */
+const finale = computed(() => {
+  const start = 1 - FINALE_SHARE * 0.7
+  if (progress.value <= start) return 0
+  return Math.min(1, (progress.value - start) / (1 - start))
+})
+
+const journeyLabel =
+  '滚动驱动的学习旅程：课程逐节进入画面中央、进度条填满并完成后向上堆叠，计划完成度随滚动持续上升，最后展示全部完成的路线图'
+
+function lessonFill(index: number): number {
+  return Math.max(0, Math.min(1, head.value - index))
 }
 
-const focusClock = computed(() => {
-  const minutes = Math.floor(focusSeconds.value / 60)
-  const seconds = focusSeconds.value % 60
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-})
+function cardState(index: number): Record<string, boolean> {
+  // Read from the bar itself, so "completed" always means a full bar.
+  const fill = lessonFill(index)
+  return {
+    'is-done': fill >= 1,
+    'is-active': fill > 0 && fill < 1,
+    'is-next': fill <= 0,
+  }
+}
 
-const stageNote = computed(() => {
-  if (stageStep.value >= LAST_ORDER) return '里程碑「发布 1.0」进度已更新'
-  if (stageStep.value >= 3) return '项目进度随任务完成一起上移'
-  if (stageStep.value >= 1) return '专注时间正流向今天的任务'
-  return '专注计时进行中，网络待命'
-})
-
-const stageLabel =
-  '动画：一个正在运行的专注计时向外发出光点，光点沿曲线流经任务、项目直到发布里程碑，沿途的进度条随之增长'
-
-const parallaxStyle = computed<CSSProperties>(() => {
-  if (reducedMotion.value || !pointer.value.active) return {}
-  const x = (pointer.value.x - 0.5) * 14
-  const y = (pointer.value.y - 0.5) * 10
-  return { transform: `translate3d(${-x}px, ${-y}px, 0)` }
-})
+/**
+ * Lay the lessons out as one continuous column that slides upward as the head
+ * advances. Finished lessons keep moving but with a much smaller gap, so they
+ * collect into a compact stack at the top instead of drifting off screen.
+ */
+function cardStyle(index: number): CSSProperties {
+  const spacing = Math.max(112, Math.min(168, stageHeight.value * 0.2))
+  const doneSpacing = 36
+  const delta = index - layoutHead.value
+  const distance = Math.abs(delta)
+  // Finished lessons collect into a small pile above the centre: tighter
+  // spacing, smaller, and fading out quickly so only the most recent few read.
+  // Below the centre lessons queue at full spacing. Above it they first clear
+  // the active card by `baseGap`, then pile up tightly. Splitting it this way
+  // keeps the motion continuous across the centre instead of jumping.
+  const baseGap = Math.max(104, spacing * 0.78)
+  const offset =
+    delta >= 0
+      ? delta * spacing
+      : delta > -1
+        ? delta * baseGap
+        : -(baseGap + (distance - 1) * doneSpacing)
+  const scale =
+    delta < 0
+      ? Math.max(0.66, 0.82 - (distance - 1) * 0.05)
+      : Math.max(0.86, 1 - distance * 0.05)
+  const opacity =
+    delta < 0
+      ? Math.max(0, 0.62 - Math.max(0, distance - 1) * 0.26)
+      : Math.max(0, 1 - Math.max(0, distance - 0.6) * 0.42)
+  return {
+    transform: `translate3d(-50%, calc(-50% + ${offset.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`,
+    opacity: String(Number(opacity.toFixed(3))),
+    zIndex: String(100 - index),
+  }
+}
 
 const magnetStyle = computed<CSSProperties>(() =>
   reducedMotion.value ? {} : { transform: `translate3d(${magnet.value.x}px, ${magnet.value.y}px, 0)` },
 )
 
 let shotTimer = 0
-let stageTimer = 0
-let clockTimer = 0
 let revealFallback = 0
 let motionQuery: MediaQueryList | null = null
 
@@ -478,24 +433,35 @@ function updateReveal(): void {
   }
 }
 
+/**
+ * Turn scroll position into journey progress. The track is taller than the
+ * viewport and its stage is sticky, so the span between "track top reaches the
+ * top of the screen" and "track bottom does" is exactly the animation.
+ */
+function updateJourney(): void {
+  const section = journeyEl.value
+  if (!section) return
+  stageHeight.value = window.innerHeight
+  if (reducedMotion.value) {
+    progress.value = 1
+    return
+  }
+  const rect = section.getBoundingClientRect()
+  const travel = rect.height - window.innerHeight
+  if (travel <= 0) {
+    progress.value = rect.top <= 0 ? 1 : 0
+    return
+  }
+  progress.value = Math.max(0, Math.min(1, -rect.top / travel))
+}
+
 function onScroll(): void {
   // Browsers already fire scroll at most once per frame, and this reads a
   // handful of rects; requestAnimationFrame here would only add a way for the
   // work to be skipped when frames are throttled.
   scrolled.value = window.scrollY > 12
+  updateJourney()
   updateReveal()
-}
-
-function trackPointer(event: PointerEvent): void {
-  pointer.value = {
-    x: event.clientX / window.innerWidth,
-    y: event.clientY / window.innerHeight,
-    active: true,
-  }
-}
-
-function resetPointer(): void {
-  pointer.value = { ...pointer.value, active: false }
 }
 
 /** Let the primary call to action lean a little toward the cursor. */
@@ -524,45 +490,19 @@ function restartShotTimer(): void {
   }, 5200)
 }
 
-/**
- * Walk progress outward from the focus session — task, task, project, project,
- * milestone — hold the finished network briefly, then start over. Reduced
- * motion gets the settled state with no cycling.
- */
-function restartStageTimer(): void {
-  window.clearInterval(stageTimer)
-  if (reducedMotion.value) {
-    stageStep.value = LAST_ORDER
-    return
-  }
-  stageStep.value = 0
-  stageTimer = window.setInterval(() => {
-    stageStep.value = stageStep.value >= LAST_ORDER + HOLD_STEPS ? 0 : stageStep.value + 1
-  }, STEP_MS)
-}
-
 onMounted(() => {
   motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
   const onMotionChange = (event: MediaQueryListEvent): void => {
     reducedMotion.value = event.matches
     revealArmed.value = !event.matches
     restartShotTimer()
-    restartStageTimer()
+    onScroll()
   }
   motionQuery.addEventListener('change', onMotionChange)
 
   window.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('resize', onScroll, { passive: true })
-  window.addEventListener('pointermove', trackPointer, { passive: true })
-  window.addEventListener('pointerleave', resetPointer)
-
   restartShotTimer()
-  restartStageTimer()
-  if (!reducedMotion.value) {
-    clockTimer = window.setInterval(() => {
-      focusSeconds.value += 1
-    }, 1000)
-  }
 
   onScroll()
   // Template refs on a v-for can land after this hook; run once more when they
@@ -583,11 +523,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   window.removeEventListener('resize', onScroll)
-  window.removeEventListener('pointermove', trackPointer)
-  window.removeEventListener('pointerleave', resetPointer)
   window.clearInterval(shotTimer)
-  window.clearInterval(stageTimer)
-  window.clearInterval(clockTimer)
   window.clearTimeout(revealFallback)
   revealTargets.clear()
 })

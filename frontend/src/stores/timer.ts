@@ -592,8 +592,11 @@ export const useTimerStore = defineStore('timer', {
     /**
      * Choose what happens when the planned duration runs out: keep counting
      * (the default, so an overrun is recorded honestly) or stop by itself.
+     * The choice is fixed while a session is open — switching to 自动停止 on a
+     * run that is already past its planned time would stop it on the spot.
      */
     setAutoStopAtTarget(enabled: boolean): void {
+      if (this.active) return
       this.autoStopAtTarget = enabled
       writeAutoStopPreference(enabled)
       if (enabled) this.maybeAutoStopAtTarget()

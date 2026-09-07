@@ -63,7 +63,8 @@
                 type="button"
                 :class="{ 'timer-mode__button--active': !timer.autoStopAtTarget }"
                 :aria-pressed="!timer.autoStopAtTarget"
-                title="继续累计超出的时间，由你手动暂停或结束"
+                :disabled="stopModeLocked"
+                :title="stopModeLocked ? stopModeLockedHint : '继续累计超出的时间，由你手动暂停或结束'"
                 @click="timer.setAutoStopAtTarget(false)"
               >
                 手动停止
@@ -72,11 +73,15 @@
                 type="button"
                 :class="{ 'timer-mode__button--active': timer.autoStopAtTarget }"
                 :aria-pressed="timer.autoStopAtTarget"
-                title="刚好用满计划用时就自动停表，之后仍可继续或标记完成"
+                :disabled="stopModeLocked"
+                :title="stopModeLocked ? stopModeLockedHint : '刚好用满计划用时就自动停表，之后仍可继续或标记完成'"
                 @click="timer.setAutoStopAtTarget(true)"
               >
                 自动停止
               </button>
+              <span v-if="stopModeLocked" class="timer-mode__lock" role="note">
+                {{ stopModeLockedHint }}
+              </span>
             </div>
           </div>
 
@@ -649,11 +654,15 @@ function buildGanttRow(task: Task, series: TaskDailySeries | null): GanttChartRo
     moduleId: module?.id ?? null,
     moduleTitle: module?.title ?? '',
     status: task.status,
+    // Progress is measured time against the plan. Completing a task by hand
+    // must not fill the bar: the chart reports the time this app actually
+    // recorded, and a task finished in half its budget should look that way.
+    // With no plan to measure against, completion is all there is to show.
     progressRatio:
-      task.status === 'DONE'
-        ? 1
-        : task.estimated_seconds > 0
-          ? Math.min(1, task.actual_seconds / task.estimated_seconds)
+      task.estimated_seconds > 0
+        ? Math.min(1, task.actual_seconds / task.estimated_seconds)
+        : task.status === 'DONE'
+          ? 1
           : null,
     activeDays: series?.daily.length ?? 0,
     spanDays: dayDiff(firstDate, lastDate) + 1,
@@ -800,6 +809,14 @@ const timerStateLabel = computed(() => {
  * also the point a new session continues from.
  */
 const pendingStartSeconds = computed(() => selectedTimerItem.value?.actual_seconds ?? 0)
+/**
+ * The stop mode is a property of the run you are about to start, so it is
+ * fixed once a session exists. Switching it mid-session would either stop a
+ * running task on the spot (when it is already past its planned time) or
+ * quietly change the deal partway through.
+ */
+const stopModeLocked = computed(() => Boolean(timer.active))
+const stopModeLockedHint = '计时进行中不能切换，请先结束当前计时。'
 const timerRemainingSeconds = computed(() => {
   const item = timerTargetItem.value
   if (!item || item.estimated_seconds <= 0) return 0

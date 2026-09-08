@@ -100,6 +100,11 @@ MVP 使用 Supabase 控制台提供的数据库备份/导出能力。手工运�
   `app.main:app`；
 - `/api/*` 请求转发到 `backend`，其他请求转发到 `frontend`。现有前端默认使用
   `VITE_API_BASE_URL=/api/v1`，因此生产环境保持同源访问，无需硬编码后端域名。
+- 前端是 `createWebHistory()` 单页应用，`/today`、`/login` 等路由在服务端没有对应文件。因此
+  `rewrites` 里 `/assets/*` 和带扩展名的路径（`/(.*\..*)`，如 `/dayflow-logo.svg`）按原路径交给
+  `frontend` 读取静态文件，其余路径用 `"path": "/index.html"` 落到单页入口，交给 vue-router 处理。
+  `path` 只影响服务内部选路，浏览器地址不变，刷新 `/today` 才不会返回 Vercel 的 404。
+  **新增静态文件时如果没有扩展名，需要在这里补一条规则。**
 
 ### 1. 创建或更新 Vercel Project
 

@@ -1096,20 +1096,24 @@ onMounted(async () => {
   const ownerId = auth.user?.profile.id
   if (!ownerId) return
   try {
-    // None of the three fetches on this page needs the timer: the charts, the
-    // task tree and the daily plan each stand alone, and the timer only says
-    // which plan item is running. Queueing them behind timer.initialize() --
-    // which makes its own server round trip to restore a running session --
-    // kept the task tree empty for as long as that request took, so the
-    // progress chart rendered "no schedule yet" and today's scheduled project
-    // tasks arrived late. Start all three now, and hand the plan the timer's
-    // answer once it lands.
+    // Mark the chart panels busy up front. Their request is deferred to the end
+    // of this handler, and without this they would spend the gap looking loaded
+    // but empty -- which is exactly the "no schedule yet" flash being fixed.
+    calendarLoading.value = true
+    distributionLoading.value = true
+    ganttLoading.value = true
+    // The task tree and today's plan are what this page is for, and neither
+    // needs the timer to fetch -- the timer only says which plan item is
+    // running. Queueing them behind timer.initialize(), which makes its own
+    // round trip to restore a running session, kept the tree empty for as long
+    // as that took, so the progress chart rendered "no schedule yet" and
+    // today's scheduled project tasks arrived late. Start them now and hand
+    // the plan the timer's answer once it lands.
     const requiresTaskLoad = tasks.ownerId !== ownerId || tasks.items.length === 0
     const requiresDailyLoad =
       daily.ownerId !== ownerId ||
       daily.selectedDate !== todayDate.value ||
       !daily.plan
-    const chartsLoaded = loadTodayCharts()
     const tasksLoaded = requiresTaskLoad ? tasks.initialize(ownerId) : Promise.resolve()
     const dailyLoaded = requiresDailyLoad
       ? daily.initialize(ownerId, todayDate.value)
@@ -1120,11 +1124,19 @@ onMounted(async () => {
 
     // Settled, not all: a failure in one panel must not leave the rest of the
     // page blank. Each loader records its own error next to what it renders.
-    const results = await Promise.allSettled([tasksLoaded, dailyLoaded, chartsLoaded])
+    const results = await Promise.allSettled([tasksLoaded, dailyLoaded])
     const failure = results.find((result) => result.status === 'rejected')
     if (failure) {
       errorMessage.value = getApiErrorMessage((failure as PromiseRejectedResult).reason)
     }
+    // The charts follow the two above rather than racing them. The overview is
+    // the heavy query and the backend pool is only four connections wide
+    // (pool_size=2 + max_overflow=2), so opening it alongside them left the
+    // plan list waiting on a pool slot behind it. It is also the panel the
+    // user reads last, and the progress chart cannot draw a row until the task
+    // tree has arrived anyway. It records its own per-panel errors and never
+    // rejects, so nothing here needs its result.
+    void loadTodayCharts()
     await restoreMissingActiveItem()
     await adoptTimerBaseline()
     await daily.syncProjectTasks()

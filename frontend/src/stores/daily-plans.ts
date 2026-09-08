@@ -289,6 +289,10 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           if (cached) {
             this.plan = cached
             await this.buildLocalCheckIn()
+            // The cached day is on screen, so stop reporting a load. TodayView
+            // hides the list behind `loading`, which kept "正在读取计划…" up for
+            // the whole server round trip and wasted this read entirely.
+            this.loading = false
           }
         }
         if (this.online) {

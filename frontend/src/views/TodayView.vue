@@ -258,9 +258,40 @@
             <summary>+ 添加今日任务</summary>
             <div class="quick-add__body">
               <p class="quick-add__hint">
-                在项目里安排到今天的任务会自动出现在上面，这里用来临时想到什么就加什么。
+                选择一个还没加入今天的可计时项目或任务，也可以直接新建任务。
               </p>
-              <form class="quick-add__form" @submit.prevent="addItem">
+              <div class="quick-add__tabs" role="group" aria-label="添加方式">
+                <button type="button" :class="{ active: itemKind === 'existing' }" @click="itemKind = 'existing'">
+                  选择已有
+                </button>
+                <button type="button" :class="{ active: itemKind === 'new' }" @click="itemKind = 'new'">
+                  新建任务
+                </button>
+              </div>
+
+              <form v-if="itemKind === 'existing'" class="quick-add__form" @submit.prevent="addItem">
+                <select v-model="planTaskId" class="quick-add__select" required aria-label="选择已有项目或任务">
+                  <option value="">选择还没加入今天的项目或任务…</option>
+                  <option v-for="task in availableTasks" :key="task.id" :value="task.id">
+                    {{ availableTaskLabel(task) }}
+                  </option>
+                </select>
+                <label class="quick-add__duration">
+                  <input v-model.number="estimatedMinutes" type="number" min="1" max="5256000" step="1" class="quick-add__minutes" aria-label="计划分钟数" />
+                  <span>分钟</span>
+                </label>
+                <button
+                  class="button button--primary button--small"
+                  type="submit"
+                  :disabled="quickAddBusy || !canAdd"
+                  :aria-busy="quickAddBusy"
+                  :title="quickAddButtonTitle"
+                >
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
+                </button>
+              </form>
+
+              <form v-else class="quick-add__form" @submit.prevent="addItem">
                 <input
                   v-model.trim="newTaskTitle"
                   class="quick-add__input"
@@ -279,14 +310,26 @@
                   </select>
                 </label>
                 <label class="quick-add__duration">
-                  <input v-model.number="estimatedMinutes" type="number" min="0" max="5256000" class="quick-add__minutes" aria-label="计划分钟数" />
+                  <input v-model.number="estimatedMinutes" type="number" min="1" max="5256000" step="1" class="quick-add__minutes" aria-label="计划分钟数" />
                   <span>分钟</span>
                 </label>
-                <button class="button button--primary button--small" type="submit" :disabled="daily.saving || tasks.saving || !canAdd">
-                  {{ daily.saving || tasks.saving ? '添加中…' : '添加' }}
+                <button
+                  class="button button--primary button--small"
+                  type="submit"
+                  :disabled="quickAddBusy || !canAdd"
+                  :aria-busy="quickAddBusy"
+                  :title="quickAddButtonTitle"
+                >
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
                 </button>
               </form>
-              <p v-if="!newTaskParentId" class="quick-add__hint quick-add__hint--muted">
+              <p v-if="itemKind === 'existing'" class="quick-add__hint quick-add__hint--muted">
+                只加入今天，不修改原排期；只有没有下级的任务、空项目或空模块可以直接计时。
+              </p>
+              <p v-else-if="quickAddInheritedSeconds !== null" class="quick-add__hint quick-add__hint--muted">
+                已同步所选归属的新任务默认用时（包含从项目继承的值）；你仍可直接修改分钟数。
+              </p>
+              <p v-if="itemKind === 'new' && !newTaskParentId" class="quick-add__hint quick-add__hint--muted">
                 临时任务会归档到项目页的“临时任务”里，之后可以随时归入某个项目。
               </p>
             </div>
@@ -485,7 +528,7 @@ import type {
 import type { DailyPlanItem } from '@/types/daily-plan'
 import type { Task } from '@/types/task'
 import { getApiErrorMessage } from '@/utils/api-error'
-import { projectFilingTargets } from '@/utils/task-filing'
+import { inheritedTaskEstimate, isInboxProject, projectFilingTargets } from '@/utils/task-filing'
 import { projectPrefixedTaskTitle } from '@/utils/task-title'
 import { formatDuration, formatDurationCompact } from '@/utils/time'
 import { formatTimer } from '@/utils/timer'
@@ -508,6 +551,8 @@ const focusDate = ref(localDateString())
 const ganttSeries = ref<TaskDailySeries[]>([])
 const ganttLoading = ref(false)
 const ganttError = ref('')
+const itemKind = ref<'existing' | 'new'>('existing')
+const planTaskId = ref('')
 const newTaskTitle = ref('')
 const newTaskParentId = ref('')
 const estimatedMinutes = ref(30)
@@ -520,6 +565,7 @@ let ganttRequestId = 0
 let lastActivationRefreshAt = 0
 const ACTIVATION_REFRESH_INTERVAL_MS = 60_000
 const GANTT_RANGE_DAYS = 365
+const QUICK_ADD_FALLBACK_MINUTES = 30
 
 const displayDate = computed(() =>
   new Date(`${todayDate.value}T00:00:00`).toLocaleDateString('zh-CN', {
@@ -729,8 +775,26 @@ function rootProjectOf(task: Task): Task | null {  let current = task
 function dayDiff(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000)
 }
+const plannedTaskIds = computed(
+  () => new Set(daily.plan?.items.flatMap((item) => (item.task_id ? [item.task_id] : []))),
+)
+const parentTaskIds = computed(
+  () => new Set(tasks.items.flatMap((task) => (task.parent_id ? [task.parent_id] : []))),
+)
+const availableTasks = computed(() =>
+  tasks.items.filter(
+    (task) =>
+      !parentTaskIds.value.has(task.id) &&
+      !plannedTaskIds.value.has(task.id) &&
+      task.status !== 'DONE' &&
+      !isInboxProject(task),
+  ),
+)
 /** Projects and modules a newly captured task can be filed under. */
 const fileTargets = computed(() => projectFilingTargets(tasks.items))
+const quickAddInheritedSeconds = computed(() =>
+  inheritedTaskEstimate(tasks.items, newTaskParentId.value || null),
+)
 /**
  * Name the destination rather than asking "要做什么": the box already sits
  * under 今日任务, so the useful context is which project the task will join.
@@ -739,7 +803,88 @@ const newTaskPlaceholder = computed(() => {
   const target = fileTargets.value.find((option) => option.id === newTaskParentId.value)
   return target ? `在「${target.name}」里新建任务…` : '临时任务名称…'
 })
-const canAdd = computed(() => Boolean(newTaskTitle.value))
+const normalizedEstimatedMinutes = computed(() => {
+  const value = Number(estimatedMinutes.value)
+  return Number.isFinite(value) ? Math.round(value) : 0
+})
+const quickAddBusy = computed(() => daily.loading || daily.saving || tasks.saving)
+const canAdd = computed(() =>
+  (itemKind.value === 'existing' ? Boolean(planTaskId.value) : Boolean(newTaskTitle.value)) &&
+  Boolean(daily.plan) &&
+  normalizedEstimatedMinutes.value > 0 &&
+  normalizedEstimatedMinutes.value <= 5_256_000,
+)
+const quickAddButtonTitle = computed(() => {
+  if (daily.loading || !daily.plan) return '正在准备今日计划'
+  if (daily.saving || tasks.saving) return '正在添加任务'
+  if (itemKind.value === 'existing' && !planTaskId.value) return '请先选择要加入今天的项目或任务'
+  if (itemKind.value === 'new' && !newTaskTitle.value) return '请先填写任务名称'
+  if (normalizedEstimatedMinutes.value <= 0) return '计划用时至少为 1 分钟'
+  if (normalizedEstimatedMinutes.value > 5_256_000) return '计划用时不能超过 5256000 分钟'
+  return '添加到今日任务'
+})
+
+watch(newTaskParentId, () => {
+  if (itemKind.value !== 'new') return
+  estimatedMinutes.value = quickAddInheritedSeconds.value === null
+    ? QUICK_ADD_FALLBACK_MINUTES
+    : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
+})
+
+watch(planTaskId, (taskId) => {
+  if (itemKind.value !== 'existing') return
+  const task = tasks.items.find((candidate) => candidate.id === taskId)
+  if (!task) return
+  const initialSeconds = task.estimated_seconds > 0
+    ? task.estimated_seconds
+    : inheritedTaskEstimate(tasks.items, task.id)
+      ?? task.fixed_budget_seconds
+      ?? task.planned_seconds
+  estimatedMinutes.value = initialSeconds > 0
+    ? Math.max(1, Math.floor(initialSeconds / 60))
+    : QUICK_ADD_FALLBACK_MINUTES
+})
+
+watch(itemKind, (kind) => {
+  if (kind === 'new') {
+    estimatedMinutes.value = quickAddInheritedSeconds.value === null
+      ? QUICK_ADD_FALLBACK_MINUTES
+      : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
+    return
+  }
+  const selected = tasks.items.find((task) => task.id === planTaskId.value)
+  if (!selected) estimatedMinutes.value = QUICK_ADD_FALLBACK_MINUTES
+})
+
+const repeatLabels: Record<Task['repeat_rule'], string> = {
+  NONE: '不重复',
+  DAILY: '每天重复',
+  WEEKDAYS: '工作日重复',
+  WEEKLY: '每周重复',
+  MONTHLY: '每月重复',
+}
+
+function shortDate(date: string): string {
+  const [, month, day] = date.split('-')
+  return `${Number(month)}月${Number(day)}日`
+}
+
+function availableTaskLabel(task: Task): string {
+  const title = projectPrefixedTaskTitle(task, tasks.items)
+  if (task.node_type === 'PROJECT') return `${title} · 空项目`
+  if (task.node_type === 'MODULE') return `${title} · 空模块`
+  if (task.repeat_rule !== 'NONE') return `${title} · ${repeatLabels[task.repeat_rule]}`
+  if (task.due_date) return `${title} · 截止 ${shortDate(task.due_date)}`
+  const start = task.planned_start_date
+  const end = task.planned_end_date
+  if (start || end) {
+    const from = start ? shortDate(start) : '不限'
+    const to = end ? shortDate(end) : '不限'
+    return `${title} · 安排 ${from}–${to}`
+  }
+  return `${title} · 未安排`
+}
+
 const orderedDailyItems = computed(() => {
   const items = [...(daily.plan?.items ?? [])]
   return items.sort((left, right) => {
@@ -1339,14 +1484,29 @@ async function runTimerAction(action: () => Promise<void>): Promise<void> {
 }
 
 /**
- * Add something to today. The captured task becomes a real task — filed under
- * a project straight away, or kept as a 临时任务 in the projects page archive
- * — and is due today, so the ordinary schedule rule is what puts it in this
- * list, exactly like a task scheduled from the projects page.
+ * Add an existing executable node, or capture a new task and add it in one
+ * operation. Empty projects/modules are executable until they gain children;
+ * containers with children are intentionally absent from the picker.
  */
 async function addItem(): Promise<void> {
   await runAction(async () => {
-    const estimatedSeconds = Math.max(0, Math.round(estimatedMinutes.value * 60))
+    // Never create the project-side task before the date-scoped plan exists.
+    // During a cold/slow load the form used to submit while `daily.plan` was
+    // still null, leaving an orphan task behind and no row under 今日任务.
+    if (!daily.plan) await daily.load(todayDate.value)
+    if (!daily.plan) throw new Error('Daily plan is not loaded')
+    const estimatedSeconds = normalizedEstimatedMinutes.value * 60
+    if (itemKind.value === 'existing') {
+      const selectedTask = tasks.items.find((task) => task.id === planTaskId.value)
+      if (!selectedTask) throw new Error('Task not found')
+      await daily.addItem({
+        task_id: selectedTask.id,
+        title: projectPrefixedTaskTitle(selectedTask, tasks.items),
+        estimated_seconds: estimatedSeconds,
+      })
+      planTaskId.value = ''
+      return
+    }
     const created = await tasks.create({
       title: newTaskTitle.value,
       parent_id: newTaskParentId.value || null,

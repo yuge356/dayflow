@@ -11,4 +11,10 @@ export interface SyncOperation {
   created_at: string
   retry_count: number
   last_error: string | null
+  /**
+   * When this operation was last sent and refused. Rejected operations back
+   * off instead of being retried on every replay — otherwise one permanently
+   * invalid write costs a failed round trip every time a page opens.
+   */
+  last_attempt_at?: string
 }

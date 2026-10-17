@@ -23,6 +23,7 @@ interface TimerState {
   active: LocalTimerState | null
   history: StudySession[]
   displaySeconds: number
+  baseSeconds: number | null
   targetSeconds: number | null
   pendingCount: number
   initialized: boolean
@@ -38,12 +39,16 @@ interface TimerState {
   onlineListenerBound: boolean
   observedLocalDate: string
   rolloverPausePending: boolean
+  /** Stop the clock by itself once the planned duration is reached. */
+  autoStopAtTarget: boolean
+  autoStoppedSessionId: string | null
 }
 
 interface PendingExitPause {
   owner_id: string
   session_id: string
   target_seconds: number | null
+  base_seconds: number | null
   snapshot: SessionSnapshot
 }
 
@@ -51,6 +56,24 @@ interface TimerHeartbeat {
   owner_id: string
   session_id: string
   observed_at: string
+}
+
+const AUTO_STOP_STORAGE_KEY = 'time-budget:auto-stop-at-target'
+
+function readAutoStopPreference(): boolean {
+  try {
+    return localStorage.getItem(AUTO_STOP_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeAutoStopPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(AUTO_STOP_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // The choice still applies to this visit.
+  }
 }
 
 function exitPauseStorageKey(ownerId: string): string {
@@ -182,6 +205,7 @@ async function restorePendingExitPause(ownerId: string): Promise<void> {
     pending.session_id,
     pending.snapshot,
     pending.target_seconds,
+    pending.base_seconds ?? null,
   )
   await enqueueSessionSnapshot(ownerId, pending.session_id, pending.snapshot)
   clearPendingExitPause(ownerId)
@@ -240,10 +264,29 @@ async function recoverInterruptedRunningTimer(
     timerState.session_id,
     snapshot,
     timerState.target_seconds,
+    timerState.base_seconds ?? null,
   )
   await enqueueSessionSnapshot(ownerId, timerState.session_id, snapshot)
   clearTimerHeartbeat(ownerId)
   return recovered
+}
+
+/**
+ * Whether `GET /sessions/active` really returned a session. A deployment that
+ * misroutes `/api` answers 200 with an HTML page; adopting that produced an
+ * "active" timer whose every field was undefined, which reached the screen as
+ * a phantom task counting `NaN:NaN:NaN` and was then written to IndexedDB.
+ */
+function isUsableServerSession(session: StudySession | null): session is StudySession {
+  if (!session || typeof session !== 'object') return false
+  return (
+    typeof session.id === 'string' &&
+    typeof session.client_id === 'string' &&
+    (session.status === 'RUNNING' || session.status === 'PAUSED') &&
+    Number.isFinite(session.duration_seconds) &&
+    Number.isFinite(Date.parse(session.started_at)) &&
+    Number.isFinite(Date.parse(session.client_updated_at))
+  )
 }
 
 function isMissingDailyPlanItemError(error: unknown): boolean {
@@ -310,6 +353,7 @@ export const useTimerStore = defineStore('timer', {
     active: null,
     history: [],
     displaySeconds: 0,
+    baseSeconds: null,
     targetSeconds: null,
     pendingCount: 0,
     initialized: false,
@@ -325,7 +369,22 @@ export const useTimerStore = defineStore('timer', {
     onlineListenerBound: false,
     observedLocalDate: localDateString(),
     rolloverPausePending: false,
+    autoStopAtTarget: readAutoStopPreference(),
+    autoStoppedSessionId: null,
   }),
+
+  getters: {
+    /**
+     * Seconds shown on the timer face: everything the timed daily item has
+     * accumulated today, not just the current session. Ending a task early
+     * and starting it again therefore continues from the point it stopped,
+     * and the focus panel, the today list and the floating bar all read the
+     * same number.
+     */
+    totalSeconds(state): number {
+      return (state.baseSeconds ?? 0) + state.displaySeconds
+    },
+  },
 
   actions: {
     startTicker(): void {
@@ -341,11 +400,33 @@ export const useTimerStore = defineStore('timer', {
         if (this.active) {
           this.displaySeconds = snapshotDuration(this.active.snapshot)
           this.maybeNotifyTargetReached()
+          this.maybeAutoStopAtTarget()
           if (this.ownerId && this.active.snapshot.status === 'RUNNING') {
             writeTimerHeartbeat(this.ownerId, this.active.session_id)
           }
         }
       }, 1_000)
+    },
+
+    /**
+     * Give a restored session the accumulated time of its daily item. A
+     * session recovered from the server (or from a device whose local
+     * database was cleared) has no stored baseline, so the item's own total
+     * minus this session's contribution is the closest exact starting point.
+     */
+    async adoptBaseSeconds(itemActualSeconds: number): Promise<void> {
+      if (!this.ownerId || !this.active || this.baseSeconds !== null) return
+      const sessionSeconds = snapshotDuration(this.active.snapshot)
+      const base = Math.max(0, Math.round(itemActualSeconds) - sessionSeconds)
+      this.baseSeconds = base
+      this.active = { ...this.active, base_seconds: base }
+      await saveActiveTimer(
+        this.ownerId,
+        this.active.session_id,
+        this.active.snapshot,
+        this.targetSeconds,
+        base,
+      )
     },
 
     async initialize(ownerId: string): Promise<void> {
@@ -358,6 +439,7 @@ export const useTimerStore = defineStore('timer', {
         ? await recoverInterruptedRunningTimer(ownerId, storedTimer)
         : null
       this.targetSeconds = this.active?.target_seconds ?? null
+      this.baseSeconds = this.active ? (this.active.base_seconds ?? null) : null
       this.history = []
       this.syncError = ''
       this.online = navigator.onLine
@@ -425,12 +507,14 @@ export const useTimerStore = defineStore('timer', {
           }
           if (!this.active && this.online) {
             const serverActive = await sessionService.active()
-            if (serverActive) {
+            if (isUsableServerSession(serverActive)) {
               this.active = {
                 id: ownerId,
                 owner_id: ownerId,
                 session_id: serverActive.id,
                 target_seconds: this.targetSeconds,
+                // Adopted from the daily item once the Today page knows it.
+                base_seconds: null,
                 snapshot: {
                   task_id: serverActive.task_id,
                   daily_plan_item_id: serverActive.daily_plan_item_id,
@@ -448,6 +532,7 @@ export const useTimerStore = defineStore('timer', {
                 this.active.session_id,
                 this.active.snapshot,
                 this.targetSeconds,
+                null,
               )
               this.displaySeconds = snapshotDuration(this.active.snapshot)
             }
@@ -478,7 +563,7 @@ export const useTimerStore = defineStore('timer', {
         !this.active ||
         this.active.snapshot.status !== 'RUNNING' ||
         !this.targetSeconds ||
-        this.displaySeconds < this.targetSeconds
+        this.totalSeconds < this.targetSeconds
       ) {
         return
       }
@@ -492,7 +577,9 @@ export const useTimerStore = defineStore('timer', {
       }
 
       this.notifiedSessionId = sessionId
-      this.targetNotice = '已到达计划用时，计时仍在继续；请按当前进度决定何时暂停或结束。'
+      this.targetNotice = this.autoStopAtTarget
+        ? '已到达计划用时，计时已自动停止；可以继续计时或标记完成。'
+        : '已到达计划用时，计时仍在继续；请按当前进度决定何时暂停或结束。'
       writeTargetNoticeMarker(this.ownerId, sessionId)
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('DayFlow 时间提醒', {
@@ -500,6 +587,46 @@ export const useTimerStore = defineStore('timer', {
           tag: `dayflow-target-${sessionId}`,
         })
       }
+    },
+
+    /**
+     * Choose what happens when the planned duration runs out: keep counting
+     * (the default, so an overrun is recorded honestly) or stop by itself.
+     * The choice is fixed while a session is open — switching to 自动停止 on a
+     * run that is already past its planned time would stop it on the spot.
+     */
+    setAutoStopAtTarget(enabled: boolean): void {
+      if (this.active) return
+      this.autoStopAtTarget = enabled
+      writeAutoStopPreference(enabled)
+      if (enabled) this.maybeAutoStopAtTarget()
+    },
+
+    /**
+     * Stop a running timer the moment it reaches the planned duration. The
+     * pause is dated to that exact instant, not to the tick that noticed it,
+     * so the recorded time is the planned time rather than a second more.
+     * Pressing 继续 afterwards is taken as "I want to keep going", and this
+     * session is not stopped again.
+     */
+    maybeAutoStopAtTarget(): void {
+      if (
+        !this.autoStopAtTarget ||
+        !this.active ||
+        this.active.snapshot.status !== 'RUNNING' ||
+        !this.targetSeconds ||
+        this.busy ||
+        this.totalSeconds < this.targetSeconds
+      ) {
+        return
+      }
+      const sessionId = this.active.session_id
+      if (this.autoStoppedSessionId === sessionId) return
+      this.autoStoppedSessionId = sessionId
+      const overshootSeconds = this.totalSeconds - this.targetSeconds
+      void this.pauseAt(new Date(Date.now() - overshootSeconds * 1_000)).catch(() => {
+        this.syncError = '计时已在本机停止，服务恢复后将自动同步。'
+      })
     },
 
     async syncPending(): Promise<void> {
@@ -543,6 +670,7 @@ export const useTimerStore = defineStore('timer', {
                 item.session_id,
                 syncedSnapshot,
                 this.targetSeconds,
+                this.baseSeconds,
               )
             }
             await localDb.sessionOutbox.delete(item.session_id)
@@ -590,12 +718,14 @@ export const useTimerStore = defineStore('timer', {
           sessionId,
           snapshot,
           this.targetSeconds,
+          this.baseSeconds,
         )
         this.active = {
           id: this.ownerId,
           owner_id: this.ownerId,
           session_id: sessionId,
           target_seconds: this.targetSeconds,
+          base_seconds: this.baseSeconds,
           snapshot,
         }
         this.displaySeconds = snapshotDuration(snapshot)
@@ -603,6 +733,7 @@ export const useTimerStore = defineStore('timer', {
         await clearActiveTimer(this.ownerId)
         this.active = null
         this.displaySeconds = 0
+        this.baseSeconds = null
       }
       await enqueueSessionSnapshot(this.ownerId, sessionId, snapshot)
       this.pendingCount = await localDb.sessionOutbox
@@ -633,6 +764,7 @@ export const useTimerStore = defineStore('timer', {
             sessionId,
             syncedSnapshot,
             this.targetSeconds,
+            this.baseSeconds,
           )
         }
         await localDb.sessionOutbox.delete(sessionId)
@@ -658,6 +790,7 @@ export const useTimerStore = defineStore('timer', {
       this.targetSeconds = normalizedTarget
       this.targetNotice = ''
       this.notifiedSessionId = null
+      this.autoStoppedSessionId = null
       this.active = {
         ...this.active,
         target_seconds: normalizedTarget,
@@ -672,10 +805,16 @@ export const useTimerStore = defineStore('timer', {
       this.maybeNotifyTargetReached()
     },
 
+    /**
+     * Begin a new session. `targetSeconds` is the item's whole planned time
+     * and `baseSeconds` the time it has already accumulated today, so a task
+     * that was ended early keeps counting from where it stopped.
+     */
     async start(
       taskId: string | null,
       dailyPlanItemId: string | null = null,
       targetSeconds: number | null = null,
+      baseSeconds = 0,
     ): Promise<void> {
       if (this.active?.snapshot.status === 'RUNNING') {
         throw new Error('请先暂停当前计时，再切换到其他任务。')
@@ -688,9 +827,11 @@ export const useTimerStore = defineStore('timer', {
       this.busy = true
       this.syncError = ''
       this.targetSeconds = targetSeconds && targetSeconds > 0 ? targetSeconds : null
+      this.baseSeconds = Math.max(0, Math.round(baseSeconds))
       const sessionId = crypto.randomUUID()
       this.targetNotice = ''
       this.notifiedSessionId = null
+      this.autoStoppedSessionId = null
       if (this.targetSeconds) requestSystemNotificationPermission()
       const now = nextTimestamp()
       const snapshot: SessionSnapshot = {
@@ -708,25 +849,30 @@ export const useTimerStore = defineStore('timer', {
       try {
         await this.persistSnapshot(sessionId, snapshot, true)
         if (this.ownerId) writeTimerHeartbeat(this.ownerId, sessionId)
-        try {
-          // Structural changes must be attempted before their session, but a
-          // rejected or temporarily blocked sync must not cancel local timing.
-          await this.syncPending()
-          if (!this.online) {
-            this.syncError = '计时已在本机开始，联网后将自动同步。'
-          }
-        } catch (error) {
-          if (isNetworkError(error)) this.online = false
-          this.syncError = isNetworkError(error)
-            ? '计时已在本机开始，联网后将自动同步。'
-            : '计时已开始，但新任务或计时记录暂未同步，请稍后重试。'
-        }
       } finally {
         this.pendingCount = this.ownerId
           ? await localDb.sessionOutbox.where('owner_id').equals(this.ownerId).count()
           : 0
         this.busy = false
       }
+
+      // The local snapshot is already the source of truth for the UI, so the
+      // replay runs after the busy window closes. Waiting for it here made
+      // switching tasks feel slow: every start blocked the buttons on a full
+      // outbox round trip. The outbox still replays structural changes before
+      // this session, and keeps it queued if the network is unavailable.
+      void this.syncPending()
+        .then(() => {
+          if (!this.online) {
+            this.syncError = '计时已在本机开始，联网后将自动同步。'
+          }
+        })
+        .catch((error: unknown) => {
+          if (isNetworkError(error)) this.online = false
+          this.syncError = isNetworkError(error)
+            ? '计时已在本机开始，联网后将自动同步。'
+            : '计时已开始，但新任务或计时记录暂未同步，请稍后重试。'
+        })
     },
 
     async pause(awaitSync = false): Promise<void> {
@@ -804,6 +950,7 @@ export const useTimerStore = defineStore('timer', {
         owner_id: ownerId,
         session_id: sessionId,
         target_seconds: this.targetSeconds,
+        base_seconds: this.baseSeconds,
         snapshot,
       }
 
@@ -826,6 +973,13 @@ export const useTimerStore = defineStore('timer', {
 
     async resume(): Promise<void> {
       if (!this.active || this.active.snapshot.status !== 'PAUSED') return
+      // Continuing past the planned time is a deliberate choice, so this
+      // session is not stopped again. An ordinary pause and resume before the
+      // planned time still gets the automatic stop when it arrives.
+      this.autoStoppedSessionId =
+        this.targetSeconds && this.totalSeconds >= this.targetSeconds
+          ? this.active.session_id
+          : null
       this.busy = true
       if (this.targetSeconds) requestSystemNotificationPermission()
       try {
@@ -872,6 +1026,7 @@ export const useTimerStore = defineStore('timer', {
         if (this.ownerId) clearTimerHeartbeat(this.ownerId)
         if (this.ownerId) clearTargetNoticeMarker(this.ownerId, sessionId)
         this.targetSeconds = null
+        this.baseSeconds = null
         this.targetNotice = ''
         this.notifiedSessionId = null
         this.completedRevision += 1

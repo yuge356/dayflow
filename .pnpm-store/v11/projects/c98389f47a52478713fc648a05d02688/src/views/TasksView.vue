@@ -7,16 +7,21 @@
         <p>按“项目 → 模块 → 任务”组织学习内容；容器负责管理，任务负责执行。</p>
       </section>
 
-      <div v-if="!tasks.online || tasks.pendingCount > 0" class="sync-banner">
-        <strong>{{ tasks.online ? '等待同步' : '当前离线' }}</strong>
-        <span>{{ tasks.pendingCount }} 条任务或计划变更已安全保存在本机。</span>
-      </div>
+      <SyncStatusBanner
+        :pending-count="tasks.pendingCount"
+        :failed-count="tasks.failedCount"
+        :online="tasks.online"
+        @repaired="reloadAfterRepair"
+      />
 
       <section class="task-workspace">
         <div class="task-list-panel">
           <header class="panel-header">
             <div>
-              <h2>我的项目</h2>
+              <h2>
+                我的项目
+                <HintIcon :text="taskViewHelpText" />
+              </h2>
               <p>{{ projectCount }} 个项目 · {{ executableTaskCount }} 个可执行任务</p>
             </div>
             <div class="panel-header__actions">
@@ -44,14 +49,27 @@
                 <input v-model="showCompletedProjects" type="checkbox" />
                 显示已完成项目
               </label>
+              <button
+                class="button button--quiet"
+                type="button"
+                @click="templateLibraryOpen = true"
+              >
+                模板库
+              </button>
               <button class="button button--primary" type="button" @click="openCreate">
                 新建项目
               </button>
             </div>
           </header>
 
-          <p class="task-drag-help">
-            {{ taskViewHelpText }}
+          <p
+            v-if="hiddenCompletedCount > 0 && visibleProjectTree.length > 0"
+            class="task-hidden-hint"
+          >
+            另有 {{ hiddenCompletedCount }} 个已完成项目被隐藏。
+            <button type="button" class="text-action" @click="showCompletedProjects = true">
+              显示它们
+            </button>
           </p>
 
           <FormMessage :message="loadError || timer.syncError" />
@@ -59,7 +77,7 @@
 
           <p v-if="tasks.loading && tasks.items.length === 0" class="loading-state">正在加载任务…</p>
 
-          <div v-else-if="tasks.tree.length === 0" class="empty-state">
+          <div v-else-if="tasks.projectTree.length === 0" class="empty-state">
             <span aria-hidden="true">01</span>
             <h3>从第一个项目开始</h3>
             <p>创建项目，再添加模块和具体任务。只有具体任务可以计时和完成。</p>
@@ -68,12 +86,29 @@
             </button>
           </div>
 
-          <template v-else-if="tasks.tree.length">
+          <div v-else-if="visibleProjectTree.length === 0" class="empty-state">
+            <span aria-hidden="true">✓</span>
+            <h3>{{ hiddenCompletedCount }} 个项目已标记完成</h3>
+            <p>已完成的项目默认隐藏，计时数据仍保留在时间统计与计划进度表中。</p>
+            <button
+              class="button button--primary"
+              type="button"
+              @click="showCompletedProjects = true"
+            >
+              显示已完成项目
+            </button>
+          </div>
+
+          <template v-else>
             <section v-if="taskViewMode === 'MINDMAP'" class="task-mindmap-shell">
               <header class="task-mindmap-toolbar">
                 <div>
-                  <strong>任务结构</strong>
-                  <span>每个项目一块独立画布；节点保持固定大小，超出画布的内容滚动查看</span>
+                  <strong>
+                    任务结构
+                    <HintIcon
+                      text="每个项目一块独立画布，画布高度跟随任务树本身。实线表示上下级关系；节点保持固定大小，调整窗口只裁剪画布、不缩放内容，需要时用右侧按钮缩放。"
+                    />
+                  </strong>
                 </div>
                 <div class="task-mindmap-toolbar__controls" aria-label="导图缩放控制">
                   <button class="icon-button" type="button" aria-label="缩小导图" @click="changeMapZoom(-0.1)">−</button>
@@ -118,6 +153,7 @@
                     class="task-mindmap"
                     role="group"
                     :aria-label="`${project.title}的导图画布`"
+                    :style="mapViewportStyle(project.id)"
                     @wheel.ctrl.prevent="zoomMapAtPointer"
                   >
                     <div class="task-mindmap__surface" :style="mapSurfaceStyle(project.id)">
@@ -158,16 +194,17 @@
                 </article>
               </div>
 
-              <p class="task-mindmap-hint">
-                实线表示上下级关系；调整窗口大小时节点大小不变，被遮住的部分通过画布滚动查看。
-              </p>
             </section>
 
             <section v-else class="task-card-view" aria-label="项目与任务大纲视图">
               <header class="task-card-view__header">
                 <div>
-                  <strong>项目大纲</strong>
-                  <span>父任务默认折叠；点击节点前的展开按钮查看子任务，同级子任务保持整齐对齐</span>
+                  <strong>
+                    项目大纲
+                    <HintIcon
+                      text="父任务默认折叠；点击节点前的展开箭头查看子任务，同级子任务保持整齐对齐。左侧拖动手柄可调整层级。"
+                    />
+                  </strong>
                 </div>
               </header>
               <ul class="task-tree task-tree--cards">
@@ -199,6 +236,13 @@
               </ul>
             </section>
           </template>
+
+          <Teleport to="body">
+            <ProjectTemplateLibrary
+              v-if="templateLibraryOpen"
+              @close="templateLibraryOpen = false"
+            />
+          </Teleport>
 
           <Teleport to="body">
             <div
@@ -289,7 +333,6 @@
                     :parent-task="creatingChildParent"
                     :inherited-default-estimated-seconds="inheritedDefaultEstimatedSeconds"
                     :inherited-default-repeat-rule="inheritedDefaultRepeatRule"
-                    :inherited-default-reminder-time="inheritedDefaultReminderTime"
                     :saving="tasks.saving"
                     :external-error="editorError"
                     @close="closeEditor"
@@ -302,14 +345,95 @@
                     node-type="PROJECT"
                     :saving="tasks.saving"
                     :external-error="editorError"
+                    :templates="templates.options"
+                    :selected-template-key="selectedTemplateKey"
                     @close="closeEditor"
                     @create="createTask"
+                    @select-template="selectedTemplateKey = $event"
                   />
                 </div>
               </section>
             </div>
           </Teleport>
         </div>
+
+        <section class="unfiled-panel" aria-labelledby="unfiled-panel-title">
+          <header class="unfiled-panel__header">
+            <div>
+              <h2 id="unfiled-panel-title">
+                临时任务
+                <HintIcon
+                  text="在今日页快速添加、还没有归入任何项目的任务。它们和项目里的任务完全一样，可以计时、排期和统计；想好归属后用“归入”把它移进项目或模块，时长会一并计入该项目。"
+                />
+              </h2>
+              <p v-if="unfiledTasks.length > 0">
+                {{ unfiledTasks.length }} 项待归类 · 共计时 {{ formatDuration(unfiledTotalSeconds) }}
+                <template v-if="hiddenUnfiledCount > 0">
+                  · 另有 {{ hiddenUnfiledCount }} 项已完成被隐藏
+                </template>
+              </p>
+              <p v-else-if="hiddenUnfiledCount > 0">
+                {{ hiddenUnfiledCount }} 项临时任务已完成并被隐藏，勾选上方“显示已完成项目”可查看。
+              </p>
+              <p v-else>还没有临时任务。在今日页添加任务时不选择项目，就会先归档到这里。</p>
+            </div>
+            <button
+              v-if="unfiledTasks.length > 0"
+              class="button button--quiet button--small"
+              type="button"
+              :aria-expanded="unfiledOpen"
+              @click="unfiledOpen = !unfiledOpen"
+            >
+              {{ unfiledOpen ? '收起' : '展开' }}
+            </button>
+          </header>
+
+          <ul v-if="unfiledTasks.length > 0 && unfiledOpen" class="unfiled-list">
+            <li v-for="task in unfiledTasks" :key="task.id" class="unfiled-item">
+              <div class="unfiled-item__main">
+                <button type="button" class="unfiled-item__title" @click="openEdit(task)">
+                  <strong :class="{ 'is-complete': task.status === 'DONE' }">{{ task.title }}</strong>
+                </button>
+                <span class="unfiled-item__meta">
+                  {{ unfiledMeta(task) }}
+                </span>
+              </div>
+
+              <div class="unfiled-item__actions">
+                <label class="unfiled-item__file">
+                  <span class="sr-only">把{{ task.title }}归入项目</span>
+                  <select
+                    :value="''"
+                    :disabled="tasks.saving || fileTargets.length === 0"
+                    @change="fileUnfiledTask(task, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="">
+                      {{ fileTargets.length === 0 ? '先创建一个项目' : '归入…' }}
+                    </option>
+                    <option v-for="target in fileTargets" :key="target.id" :value="target.id">
+                      {{ target.label }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  class="button button--quiet button--small"
+                  type="button"
+                  :disabled="timer.busy || Boolean(timer.active && timer.active.snapshot.status !== 'PAUSED')"
+                  @click="startTask(task)"
+                >
+                  计时
+                </button>
+                <button
+                  class="button button--finish button--small"
+                  type="button"
+                  @click="removeTask(task)"
+                >
+                  删除
+                </button>
+              </div>
+            </li>
+          </ul>
+        </section>
       </section>
     </main>
   </AppShell>
@@ -322,12 +446,17 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppShell from '@/components/AppShell.vue'
 import FormMessage from '@/components/FormMessage.vue'
+import SyncStatusBanner from '@/components/SyncStatusBanner.vue'
+import HintIcon from '@/components/HintIcon.vue'
+import ProjectTemplateLibrary from '@/components/tasks/ProjectTemplateLibrary.vue'
 import TaskEditor from '@/components/tasks/TaskEditor.vue'
 import TaskTreeNode from '@/components/tasks/TaskTreeNode.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useDailyPlanStore } from '@/stores/daily-plans'
+import { useProjectTemplateStore } from '@/stores/project-templates'
 import { useTaskStore } from '@/stores/tasks'
 import { useTimerStore } from '@/stores/timer'
+import type { TemplateNode } from '@/types/project-template'
 import type {
   Task,
   TaskCreatePayload,
@@ -337,11 +466,14 @@ import type {
 } from '@/types/task'
 import { getApiErrorMessage } from '@/utils/api-error'
 import { getProjectTheme } from '@/utils/project-theme'
+import { projectFilingTargets } from '@/utils/task-filing'
 import { projectPrefixedTaskTitle } from '@/utils/task-title'
+import { formatDuration } from '@/utils/time'
 
 defineOptions({ name: 'TasksView' })
 
 const tasks = useTaskStore()
+const templates = useProjectTemplateStore()
 const auth = useAuthStore()
 const daily = useDailyPlanStore()
 const timer = useTimerStore()
@@ -355,6 +487,8 @@ const deepLinkTaskId = ref<string | null>(null)
 const draggingTask = ref<Task | null>(null)
 const loadError = ref('')
 const editorError = ref('')
+const templateLibraryOpen = ref(false)
+const selectedTemplateKey = ref('')
 const actionMessage = ref('')
 type TaskViewMode = 'MINDMAP' | 'CARDS'
 const TASK_VIEW_MODE_STORAGE_KEY = 'time-budget:project-view-mode'
@@ -369,15 +503,94 @@ const storedTaskViewMode = (() => {
 })()
 const taskViewMode = ref<TaskViewMode>(storedTaskViewMode)
 const mapZoom = ref(1)
+// Projects open collapsed so the page starts as a readable list of projects
+// rather than a wall of task trees; ids seen after the first load (a project
+// the user just created) stay open.
 const collapsedMindmapProjects = reactive(new Set<string>())
+const decidedProjects = new Set<string>()
+let firstProjectsSeen = false
 
 // 已标记完成的项目默认从列表隐藏（计时数据保留，历史记录仍可查）。
 const showCompletedProjects = ref(false)
 const visibleProjectTree = computed(() =>
   showCompletedProjects.value
-    ? tasks.tree
-    : tasks.tree.filter((project) => project.status !== 'DONE'),
+    ? tasks.projectTree
+    : tasks.projectTree.filter((project) => project.status !== 'DONE'),
 )
+// 被“显示已完成项目”开关隐藏的项目数量。之前列表为空时页面既不显示空状态
+// 也不显示任何项目，看起来就像项目连同任务一起丢失了。
+const hiddenCompletedCount = computed(() =>
+  tasks.projectTree.length - visibleProjectTree.value.length,
+)
+
+// 临时任务归档：在今日页快速添加、还没有归入项目的任务。
+const unfiledOpen = ref(true)
+const unfiledTasks = computed(() =>
+  showCompletedProjects.value
+    ? tasks.unfiledTasks
+    : tasks.unfiledTasks.filter((task) => task.status !== 'DONE'),
+)
+const hiddenUnfiledCount = computed(
+  () => tasks.unfiledTasks.length - unfiledTasks.value.length,
+)
+const unfiledTotalSeconds = computed(() =>
+  unfiledTasks.value.reduce((total, task) => total + task.actual_seconds, 0),
+)
+
+/** Projects and their modules, as the destinations an unfiled task can move to. */
+const fileTargets = computed(() => projectFilingTargets(tasks.items))
+
+function localDateString(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function unfiledMeta(task: Task): string {
+  const parts: string[] = []
+  if (task.status === 'DONE') parts.push('已完成')
+  if (task.estimated_seconds > 0) parts.push(`计划 ${formatDuration(task.estimated_seconds)}`)
+  if (task.actual_seconds > 0) parts.push(`已计时 ${formatDuration(task.actual_seconds)}`)
+  if (task.due_date) {
+    const [, month, day] = task.due_date.split('-')
+    parts.push(`截止 ${Number(month)}月${Number(day)}日`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : '还没有安排时间'
+}
+
+/**
+ * File a temporary task under a project or module. Its recorded time moves
+ * with it into that project's totals, and today's plan keeps the item —
+ * only its stored label changes to the project-prefixed one.
+ */
+async function fileUnfiledTask(task: Task, parentId: string): Promise<void> {
+  if (!parentId) return
+  loadError.value = ''
+  actionMessage.value = ''
+  const target = fileTargets.value.find((option) => option.id === parentId)
+  try {
+    const updated = await tasks.update(task.id, { parent_id: parentId })
+    if (tasks.ownerId) {
+      await daily.syncLinkedTaskSnapshot(tasks.ownerId, task.id, {
+        title: projectPrefixedTaskTitle(updated, tasks.items),
+      })
+    }
+    actionMessage.value = `已把“${task.title}”归入${target ? `“${target.name}”` : '所选项目'}。`
+  } catch (error) {
+    loadError.value = getApiErrorMessage(error)
+  }
+}
+
+/** Pull fresh data after the user retried or discarded a quarantined write. */
+async function reloadAfterRepair(): Promise<void> {
+  loadError.value = ''
+  try {
+    await tasks.load({ silent: true })
+  } catch (error) {
+    loadError.value = getApiErrorMessage(error)
+  }
+}
 
 async function toggleProjectComplete(task: Task): Promise<void> {
   const next: Task['status'] = task.status === 'DONE' ? 'IN_PROGRESS' : 'DONE'
@@ -394,9 +607,32 @@ async function toggleProjectComplete(task: Task): Promise<void> {
   }
 }
 
+watch(
+  () => tasks.projectTree.map((project) => project.id),
+  (ids) => {
+    if (ids.length === 0) return
+    const initial = !firstProjectsSeen
+    firstProjectsSeen = true
+    for (const id of ids) {
+      if (decidedProjects.has(id)) continue
+      decidedProjects.add(id)
+      if (initial) collapsedMindmapProjects.add(id)
+    }
+  },
+  { immediate: true },
+)
+
+function expandMindmapProject(projectId: string): void {
+  collapsedMindmapProjects.delete(projectId)
+  decidedProjects.add(projectId)
+  scheduleMapLayout()
+}
+
 function toggleMindmapProject(projectId: string): void {
   if (collapsedMindmapProjects.has(projectId)) {
     collapsedMindmapProjects.delete(projectId)
+    // A hidden tree measures zero, so re-measure once it is visible again.
+    scheduleMapLayout()
   } else {
     collapsedMindmapProjects.add(projectId)
   }
@@ -426,6 +662,29 @@ function mapSurfaceStyle(projectId: string): CSSProperties {
   return {
     width: `${Math.ceil(size.width * mapZoom.value)}px`,
     height: `${Math.ceil(size.height * mapZoom.value)}px`,
+  }
+}
+
+// The canvas used to be a fixed 360-560px box whatever it held, so a project
+// with two tasks sat in a mostly empty panel while a large one scrolled
+// inside a small window. Size the viewport to the tree it actually contains,
+// bounded so a very large tree still scrolls instead of pushing the page down.
+const MAP_VIEWPORT_MIN_HEIGHT = 150
+// Generous ceiling rather than a tight window: a project should normally show
+// its whole tree without a nested scrollbar, and an unusually large one can be
+// collapsed from its title bar instead of stretching the page indefinitely.
+const MAP_VIEWPORT_MAX_HEIGHT = 2400
+const MAP_VIEWPORT_PADDING = 8
+
+function mapViewportStyle(projectId: string): CSSProperties {
+  const size = mapSizes.value[projectId]
+  if (!size) return {}
+  const content = Math.ceil(size.height * mapZoom.value) + MAP_VIEWPORT_PADDING
+  return {
+    height: `${Math.min(
+      MAP_VIEWPORT_MAX_HEIGHT,
+      Math.max(MAP_VIEWPORT_MIN_HEIGHT, content),
+    )}px`,
   }
 }
 
@@ -474,9 +733,6 @@ const inheritedDefaultEstimatedSeconds = computed<number | null>(() =>
 const inheritedDefaultRepeatRule = computed<TaskRepeatRule | null>(() =>
   resolveInheritedDefault('default_repeat_rule'),
 )
-const inheritedDefaultReminderTime = computed<string | null>(() =>
-  resolveInheritedDefault('default_daily_reminder_time'),
-)
 
 watch(
   editorDialogOpen,
@@ -484,39 +740,60 @@ watch(
   { immediate: true },
 )
 
+// Only the tree's shape changes its measured size. Comparing a joined string
+// avoids the deep diff over every task the old watcher performed, and avoids
+// relaying out on every tick of a running timer's accumulated seconds.
 watch(
-  () => tasks.items.map((task) => [
-    task.id,
-    task.parent_id,
-    task.status,
-    task.progress_ratio,
-    task.due_date,
-  ]),
+  () => tasks.items.map((task) => `${task.id}:${task.parent_id ?? ''}:${task.status}`).join('|'),
   () => scheduleMapLayout(),
-  { deep: true },
 )
 
 // Deep link from the today page gantt (?task=<id>): open the task editor and
 // expand its ancestor chain once the task tree is available, then drop the
 // query so refreshing does not reopen the dialog.
 watch(
-  () => route.query.task,
-  (query) => {
+  // Also depends on the loaded list: arriving from the plan chart on a cold
+  // page, the query is present long before the tasks are, and watching the
+  // query alone silently dropped the deep link.
+  () => [route.query.task, tasks.items.length] as const,
+  ([query]) => {
     const taskId = typeof query === 'string' ? query : null
     if (!taskId || tasks.items.length === 0) return
     const task = tasks.items.find((item) => item.id === taskId)
     if (!task) return
     deepLinkTaskId.value = taskId
+    const project = rootProjectOf(task)
+    if (project) expandMindmapProject(project.id)
     openEdit(task)
+    void nextTick(() => scrollTaskIntoView(taskId))
     void router.replace({ query: { ...route.query, task: undefined } })
   },
   { immediate: true },
 )
 
+/** Walk up to the project a task belongs to, so the deep link can open it. */
+function rootProjectOf(task: Task): Task | null {
+  let current = task
+  const visited = new Set<string>()
+  while (current.parent_id && !visited.has(current.id)) {
+    visited.add(current.id)
+    const parent = tasks.items.find((item) => item.id === current.parent_id)
+    if (!parent) return null
+    current = parent
+  }
+  return current.node_type === 'PROJECT' ? current : null
+}
+
+function scrollTaskIntoView(taskId: string): void {
+  window.requestAnimationFrame(() => {
+    const node = document.querySelector(`[data-task-id="${CSS.escape(taskId)}"]`)
+    node?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })
+  })
+}
+
 type ContainerDefaultKey =
   | 'default_estimated_seconds'
   | 'default_repeat_rule'
-  | 'default_daily_reminder_time'
 
 function resolveInheritedDefault<K extends ContainerDefaultKey>(key: K): Task[K] | null {
   let current = creatingChildParent.value
@@ -579,9 +856,23 @@ function syncMapLayout(): void {
     }
     nextSizes[projectId] = {
       width: Math.max(320, Math.ceil(tree.scrollWidth)),
-      height: Math.max(220, Math.ceil(tree.scrollHeight)),
+      height: Math.max(120, Math.ceil(tree.scrollHeight)),
     }
   })
+  // Writing the same sizes back would resize the canvas, wake the
+  // ResizeObserver and schedule another pass — a loop that showed up as the
+  // tree twitching after every render. Only publish real changes.
+  const current = mapSizes.value
+  const currentIds = Object.keys(current)
+  const nextIds = Object.keys(nextSizes)
+  const unchanged =
+    currentIds.length === nextIds.length &&
+    nextIds.every(
+      (id) =>
+        current[id]?.width === nextSizes[id]!.width &&
+        current[id]?.height === nextSizes[id]!.height,
+    )
+  if (unchanged) return
   mapSizes.value = nextSizes
 }
 
@@ -604,6 +895,9 @@ onMounted(async () => {
     const ownerId = auth.user?.profile.id
     if (ownerId) {
       await Promise.all([tasks.initialize(ownerId), timer.initialize(ownerId)])
+      // Templates are optional decoration for this page: load them after the
+      // task tree so they never delay it or block it on their own failure.
+      void templates.initialize(ownerId)
     }
   } catch (error) {
     loadError.value = getApiErrorMessage(error)
@@ -644,6 +938,7 @@ function openCreate(): void {
   creatingChildParentId.value = null
   creatingChildNodeType.value = null
   creating.value = true
+  selectedTemplateKey.value = ''
   editorError.value = ''
   actionMessage.value = ''
 }
@@ -677,6 +972,7 @@ function closeEditor(): void {
   creatingChildParentId.value = null
   creatingChildNodeType.value = null
   selectedTask.value = null
+  selectedTemplateKey.value = ''
   editorError.value = ''
 }
 
@@ -684,11 +980,51 @@ async function createTask(payload: TaskCreatePayload): Promise<void> {
   editorError.value = ''
   try {
     const createdTask = await tasks.create(payload)
+    const applied = await applySelectedTemplate(createdTask)
     closeEditor()
-    actionMessage.value = `已创建“${createdTask.title}”。`
+    actionMessage.value = applied
+      ? `已按模板创建“${createdTask.title}”，共 ${applied} 个模块与任务。`
+      : `已创建“${createdTask.title}”。`
   } catch (error) {
     editorError.value = getApiErrorMessage(error)
   }
+}
+
+/**
+ * Materialize the selected template under a freshly created project. The
+ * nodes go through the ordinary task store, so they are cached locally and
+ * replayed through the same offline outbox as any hand-made task.
+ */
+async function applySelectedTemplate(project: Task): Promise<number> {
+  const template = templates.options.find((option) => option.key === selectedTemplateKey.value)
+  selectedTemplateKey.value = ''
+  if (!template || project.node_type !== 'PROJECT') return 0
+
+  let created = 0
+  const createNodes = async (nodes: TemplateNode[], parentId: string): Promise<void> => {
+    for (const node of nodes) {
+      const child = await tasks.create({
+        parent_id: parentId,
+        node_type: node.node_type,
+        title: node.title,
+        estimated_seconds: node.node_type === 'TASK' ? node.estimated_seconds : 0,
+        budget_mode: 'ROLLUP',
+        fixed_budget_seconds: null,
+        default_estimated_seconds:
+          node.node_type === 'MODULE' ? template.default_estimated_seconds : null,
+        default_repeat_rule: node.node_type === 'MODULE' ? template.default_repeat_rule : null,
+        default_daily_reminder_time: null,
+        repeat_rule:
+          node.node_type === 'TASK' ? (template.default_repeat_rule ?? 'NONE') : 'NONE',
+        repeat_end_date: null,
+        daily_reminder_time: null,
+      })
+      created += 1
+      if (node.children.length > 0) await createNodes(node.children, child.id)
+    }
+  }
+  await createNodes(template.structure, project.id)
+  return created
 }
 
 async function updateTask(taskId: string, payload: TaskUpdatePayload): Promise<void> {
@@ -716,6 +1052,9 @@ function finishDrag(): void {
 
 function canAddChildTo(task: Task): boolean {
   if (task.node_type !== 'TASK') return false
+  // A subtask needs a project or module above its parent. An unfiled 临时任务
+  // has nothing above it, so it stays a leaf until it is filed somewhere.
+  if (task.parent_id === null) return false
   const parentType = tasks.items.find((item) => item.id === task.parent_id)?.node_type ?? null
   return parentType !== 'TASK'
 }
@@ -738,7 +1077,14 @@ async function moveTask(parent: Task): Promise<void> {
     return
   }
   try {
-    await tasks.update(moving.id, { parent_id: parent.id })
+    const updated = await tasks.update(moving.id, { parent_id: parent.id })
+    if (tasks.ownerId) {
+      // Daily items carry a "项目/任务" label snapshot; moving the task to
+      // another project would otherwise leave today's list showing the old one.
+      await daily.syncLinkedTaskSnapshot(tasks.ownerId, moving.id, {
+        title: projectPrefixedTaskTitle(updated, tasks.items),
+      })
+    }
   } catch (error) {
     loadError.value = getApiErrorMessage(error)
   } finally {
@@ -776,11 +1122,17 @@ async function startTask(task: Task): Promise<void> {
   }
   loadError.value = ''
   actionMessage.value = ''
-  const availableSeconds = task.estimated_seconds - task.direct_actual_seconds
-  const remaining = task.estimated_seconds > 0 && availableSeconds > 0
-    ? availableSeconds
-    : null
+  // The timer face counts the task's whole recorded time, so the target is
+  // its full planned duration and the baseline is what it has already used.
+  const targetSeconds = task.estimated_seconds > 0 ? task.estimated_seconds : null
   const wasSwitching = timer.active?.snapshot.status === 'PAUSED'
+  // When the task is already on today's list, time it against that row so the
+  // Today page and this page show one clock instead of two separate totals.
+  const todayItem = daily.selectedDate === localDateString()
+    ? (daily.plan?.items.find(
+        (item) => item.task_id === task.id && item.status !== 'DONE',
+      ) ?? null)
+    : null
   try {
     if (
       timer.active?.snapshot.status === 'PAUSED'
@@ -790,7 +1142,13 @@ async function startTask(task: Task): Promise<void> {
       actionMessage.value = `已继续“${task.title}”的计时。`
       return
     }
-    await timer.start(task.id, null, remaining)
+    await timer.start(
+      task.id,
+      todayItem?.id ?? null,
+      targetSeconds,
+      todayItem ? todayItem.actual_seconds : task.direct_actual_seconds,
+    )
+    daily.setActiveItem(todayItem?.id ?? null)
     actionMessage.value = wasSwitching
       ? `已切换到“${task.title}”并开始计时。`
       : `已开始“${task.title}”的计时。`

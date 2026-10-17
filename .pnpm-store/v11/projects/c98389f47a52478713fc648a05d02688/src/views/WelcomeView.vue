@@ -1,424 +1,707 @@
 <template>
-  <main class="welcome-page">
-    <div class="welcome-aurora" aria-hidden="true">
-      <span class="welcome-aurora__blob welcome-aurora__blob--violet" />
-      <span class="welcome-aurora__blob welcome-aurora__blob--pink" />
-      <span class="welcome-aurora__blob welcome-aurora__blob--blue" />
+  <main class="jr" :class="{ 'jr--still': reducedMotion, 'jr--reveal': revealArmed }">
+    <!-- Soft blue / mint / lavender wash. Decorative, transform-only. -->
+    <div class="jr-wash" aria-hidden="true" :style="{ '--flow': flow }">
+      <span class="jr-glow jr-glow--blue" />
+      <span class="jr-glow jr-glow--mint" />
+      <span class="jr-glow jr-glow--lavender" />
     </div>
 
-    <header class="welcome-header" :class="{ 'is-scrolled': scrolled }">
-      <div class="welcome-header__inner">
+    <header class="jr-nav" :class="{ 'is-stuck': scrolled }">
+      <div class="jr-shell jr-nav__inner">
         <AppLogo />
-        <nav class="welcome-header__actions" aria-label="账户入口">
-          <RouterLink class="button button--quiet" :to="{ name: 'login' }">登录</RouterLink>
-          <RouterLink class="button button--primary" :to="{ name: 'login', query: { mode: 'register' } }">
-            免费注册
+        <nav class="jr-nav__actions" aria-label="账户入口">
+          <RouterLink class="jr-quiet" :to="{ name: 'login' }">登录</RouterLink>
+          <RouterLink class="jr-cta jr-cta--sm" :to="{ name: 'login', query: { mode: 'register' } }">
+            免费开始
           </RouterLink>
         </nav>
       </div>
     </header>
 
-    <section
-      class="welcome-hero"
-      aria-labelledby="welcome-title"
-      :style="tiltStyle"
-      @pointermove.passive="trackPointer"
-      @pointerleave="resetTilt"
-    >
-      <div class="welcome-hero__copy">
-        <p class="eyebrow welcome-rise" :style="{ '--rise': 1 }">DAYFLOW · 时间预算</p>
-        <h1 id="welcome-title" class="welcome-rise" :style="{ '--rise': 2 }">
-          让每一分钟<br />流向<em>重要的事</em>
-        </h1>
-        <p class="welcome-hero__lead welcome-rise" :style="{ '--rise': 3 }">
-          计划、专注、复盘串成一条线。<br class="welcome-only-wide" />
-          先看清时间去哪了，再谈管理时间。
+    <section class="jr-hero">
+      <div class="jr-shell jr-hero__inner">
+        <p class="jr-eyebrow jr-rise" style="--i: 0">
+          <span class="jr-live" aria-hidden="true" />
+          学习旅程 · 一路累积
         </p>
-        <div class="welcome-hero__actions welcome-rise" :style="{ '--rise': 4 }">
+        <h1 class="jr-title">
+          <span class="jr-rise" style="--i: 1">一节一节学下去</span>
+          <span class="jr-rise" style="--i: 2">整个计划就完成了</span>
+        </h1>
+        <p class="jr-lead jr-rise" style="--i: 3">
+          看见每一分钟<br />
+          如何积累成成果
+        </p>
+        <div class="jr-actions jr-rise" style="--i: 4">
           <RouterLink
-            class="button button--primary welcome-hero__primary"
+            class="jr-cta jr-cta--lg"
+            :style="magnetStyle"
             :to="{ name: 'login', query: { mode: 'register' } }"
+            @pointermove.passive="trackMagnet"
+            @pointerleave="resetMagnet"
           >
-            免费开始
+            <span>免费开始</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
           </RouterLink>
-          <a class="welcome-text-link" href="#product-preview" @click="pauseAutoplay">
-            看看 DayFlow
-          </a>
         </div>
-        <ul class="welcome-hero__notes welcome-rise" :style="{ '--rise': 5 }" aria-label="产品特点">
-          <li>项目结构</li>
-          <li>专注计时</li>
-          <li>趋势分析</li>
-          <li>离线可用</li>
-        </ul>
       </div>
+    </section>
 
-      <div id="product-preview" class="welcome-showcase welcome-fade" :style="{ '--rise': 3 }">
-        <div class="welcome-stage">
-          <article
-            v-for="(slide, index) in slides"
-            :key="slide.id"
-            class="welcome-frame"
-            :class="{ 'is-active': activeSlide === index }"
-            :aria-hidden="activeSlide === index ? undefined : 'true'"
-          >
-            <div class="welcome-frame__visual">
-              <div
-                v-if="slide.kind === 'demo'"
-                v-show="activeSlide === index"
-                :key="demoCycle"
-                class="welcome-task-tree-demo"
-                role="img"
-                aria-label="横向任务树动画：叶子任务完成后，进度沿连接线逐级汇聚，最终完成整个项目"
-              >
-                <div class="welcome-task-tree-demo__scene">
-                  <svg
-                    class="welcome-task-tree-demo__lines"
-                    viewBox="0 0 1000 590"
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
-                  >
-                    <g v-for="connection in demoConnections" :key="connection.id">
-                      <path class="welcome-task-tree-demo__line-base" :d="connection.path" pathLength="1" />
-                      <path
-                        class="welcome-task-tree-demo__line-progress"
-                        :d="connection.path"
-                        pathLength="1"
-                        :style="{ '--delay': connection.delay }"
-                      />
-                    </g>
-                  </svg>
+    <!-- The journey: a tall track whose stage stays pinned, so scrolling
+         scrubs the animation instead of merely moving past it. -->
+    <section ref="journeyEl" class="jr-journey" :aria-label="journeyLabel">
+      <div class="jr-stage">
+        <div class="jr-shell jr-stage__inner">
+          <aside class="jr-summary">
+            <p class="jr-kicker">学习计划</p>
+            <h2>机器学习入门</h2>
 
-                  <article
-                    v-for="node in demoNodes"
-                    :key="node.id"
-                    class="welcome-task-tree-demo__node"
-                    :class="[
-                      `welcome-task-tree-demo__node--${node.level}`,
-                      `welcome-task-tree-demo__node--${node.branch}`,
-                    ]"
-                    :style="{
-                      left: node.left,
-                      top: node.top,
-                      width: node.width,
-                      '--delay': node.delay,
-                    }"
-                  >
-                    <span class="welcome-task-tree-demo__fill" aria-hidden="true" />
-                    <div class="welcome-task-tree-demo__node-content">
-                      <div class="welcome-task-tree-demo__node-heading">
-                        <strong>{{ node.title }}</strong>
-                        <span>{{ node.estimate }}</span>
-                      </div>
-                      <div class="welcome-task-tree-demo__status">
-                        <span class="welcome-task-tree-demo__status-pending">待开始</span>
-                        <span class="welcome-task-tree-demo__status-complete">
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M5 12.5 9.4 17 19 7.5" pathLength="1" />
-                          </svg>
-                          已完成
-                        </span>
-                      </div>
-                    </div>
-                  </article>
-                </div>
+            <div class="jr-ring" role="img" :aria-label="`完成度 ${percent}%`">
+              <svg viewBox="0 0 120 120">
+                <defs>
+                  <linearGradient id="jrRing" x1="0" y1="1" x2="1" y2="0">
+                    <stop offset="0%" stop-color="#5b8cff" />
+                    <stop offset="52%" stop-color="#a58cff" />
+                    <stop offset="100%" stop-color="#47d7b0" />
+                  </linearGradient>
+                  <!-- Repeats end-to-end, so sliding it by one period loops
+                       seamlessly and the colour never jumps. -->
+                  <linearGradient id="jrLiquid" x1="0" y1="0" x2="1" y2="0.35">
+                    <stop offset="0%" stop-color="#5b8cff" />
+                    <stop offset="18%" stop-color="#8f8cff" />
+                    <stop offset="34%" stop-color="#a58cff" />
+                    <stop offset="50%" stop-color="#63c6d8" />
+                    <stop offset="66%" stop-color="#47d7b0" />
+                    <stop offset="82%" stop-color="#8f8cff" />
+                    <stop offset="100%" stop-color="#5b8cff" />
+                  </linearGradient>
+                  <clipPath id="jrRingBowl">
+                    <circle cx="60" cy="60" r="46" />
+                  </clipPath>
+                </defs>
+
+                <!-- The centre fills like a glass of water: the surface rises
+                     with completion while two waves drift across it. -->
+                <g clip-path="url(#jrRingBowl)">
+                  <circle cx="60" cy="60" r="46" class="jr-ring__bowl" />
+                  <g class="jr-ring__water" :style="{ transform: `translateY(${waterLevel}px)` }">
+                    <!-- Both layers are filled with the same wide, repeating
+                         gradient anchored to their own box, so drifting them
+                         also drifts the colour showing through the bowl. -->
+                    <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--back" />
+                    <path :d="WAVE_PATH" class="jr-ring__wave jr-ring__wave--front" />
+                  </g>
+                </g>
+
+                <circle cx="60" cy="60" r="52" class="jr-ring__track" />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="52"
+                  class="jr-ring__value"
+                  pathLength="1"
+                  :style="{ strokeDashoffset: 1 - streamProgress }"
+                />
+              </svg>
+              <div class="jr-ring__center">
+                <strong>{{ percent }}<i>%</i></strong>
+                <span>已完成</span>
               </div>
-              <img v-else :src="slide.image" :alt="slide.alt" loading="eager" decoding="async" />
             </div>
-          </article>
 
-          <p class="welcome-stage__caption" aria-live="polite">
-            <span>{{ activeSlideMeta.kicker }}</span>
-            <strong>{{ activeSlideMeta.title }}</strong>
-          </p>
-        </div>
+            <dl class="jr-summary__stats">
+              <div>
+                <dt>已完成</dt>
+                <dd>{{ completedCount }} / {{ lessons.length }} 节</dd>
+              </div>
+              <div>
+                <dt>累计投入</dt>
+                <dd>{{ investedHours }} 小时</dd>
+              </div>
+            </dl>
+          </aside>
 
-        <div class="welcome-showcase__controls">
-          <div class="welcome-carousel__dots" aria-label="选择预览页面">
-            <button
-              v-for="(slide, index) in slides"
-              :key="slide.id"
-              type="button"
-              :class="{ 'is-active': activeSlide === index }"
-              :aria-label="`查看预览：${slide.title}`"
-              :aria-current="activeSlide === index ? 'true' : undefined"
-              @click="showSlide(index)"
+          <div class="jr-stream">
+            <div
+              class="jr-beam"
+              aria-hidden="true"
+              :style="{ '--lit': streamProgress }"
             />
+
+            <ul class="jr-cards">
+              <li
+                v-for="(lesson, index) in lessons"
+                :key="lesson.id"
+                class="jr-card"
+                :class="cardState(index)"
+                :style="cardStyle(index)"
+              >
+                <span class="jr-card__node" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M5 12.5 10 17l9-10" pathLength="1" /></svg>
+                </span>
+                <div class="jr-card__body">
+                  <p class="jr-card__meta">
+                    <span>第 {{ index + 1 }} 节</span>
+                    <span>{{ lesson.hours }}h</span>
+                  </p>
+                  <h3>{{ lesson.title }}</h3>
+                  <div class="jr-card__bar">
+                    <i :style="{ transform: `scaleX(${lessonFill(index)})` }" />
+                  </div>
+                  <p class="jr-card__foot">
+                    <span>{{ Math.round(lessonFill(index) * 100) }}%</span>
+                    <span>{{ lesson.topic }}</span>
+                  </p>
+                </div>
+              </li>
+            </ul>
           </div>
-          <p class="welcome-showcase__hint">{{ activeSlide + 1 }} / {{ slides.length }}</p>
         </div>
 
-        <div class="welcome-float-card welcome-float-card--one" aria-hidden="true">
-          <span>今日专注</span>
-          <strong>2h 15m</strong>
-        </div>
-        <div class="welcome-float-card welcome-float-card--two" aria-hidden="true">
-          <span>连续打卡</span>
-          <strong>7 天</strong>
+        <!-- Arrives only at the end of the track. -->
+        <div class="jr-finale" :class="{ 'is-on': finale > 0 }" :style="{ opacity: finale }">
+          <div class="jr-finale__card" :style="{ transform: `scale(${0.94 + finale * 0.06})` }">
+            <span class="jr-finale__spark" aria-hidden="true" />
+            <p class="jr-kicker">学习路线完成</p>
+            <strong>100%</strong>
+            <h2>机器学习入门 · 全部完成</h2>
+            <p>{{ lessons.length }} 节课 · 累计 {{ totalHours }} 小时，全部由计时记录累积而来。</p>
+            <RouterLink class="jr-cta jr-cta--lg" :to="{ name: 'login', query: { mode: 'register' } }">
+              <span>开始你的计划</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+            </RouterLink>
+          </div>
         </div>
       </div>
     </section>
 
-    <section class="welcome-highlights" ref="highlightsSection" aria-label="核心能力">
-      <article
-        v-for="(item, index) in highlights"
-        :key="item.title"
-        class="welcome-highlight"
-        :class="{ 'is-visible': highlightsVisible }"
-        :style="{ '--rise': index + 1 }"
-      >
-        <span class="welcome-highlight__icon" aria-hidden="true" v-html="item.icon" />
-        <h3>{{ item.title }}</h3>
-        <p>{{ item.text }}</p>
-      </article>
-    </section>
+    <!-- Templates advance one per screen of scroll, the same way the journey
+         does, so the page keeps one reading rhythm throughout. -->
+    <section ref="templatesEl" class="jr-templates">
+      <div class="jr-templates__stage">
+        <div class="jr-shell">
+          <header class="jr-head jr-head--center">
+            <p class="jr-kicker">从模板开始</p>
+            <h2>三种计划，开箱即用</h2>
+          </header>
 
-    <section class="welcome-closing">
-      <div>
-        <h2>今天就让计划流动起来。</h2>
-        <p>注册即用，数据存在你自己的空间里。</p>
+          <div class="jr-deck">
+            <article
+              v-for="(template, index) in templates"
+              :key="template.id"
+              class="jr-template"
+              :class="templateState(index)"
+              :style="{ ...templateStyle(index), '--accent': template.accent }"
+            >
+              <span class="jr-template__badge" aria-hidden="true">{{ template.icon }}</span>
+              <div class="jr-template__body">
+                <h3>{{ template.name }}</h3>
+                <p>{{ template.text }}</p>
+                <ul class="jr-template__outline">
+                  <li v-for="step in template.outline" :key="step">
+                    <i aria-hidden="true" />
+                    {{ step }}
+                  </li>
+                </ul>
+                <p class="jr-template__foot">{{ template.meta }}</p>
+              </div>
+            </article>
+          </div>
+
+          <ol class="jr-deck__dots" aria-hidden="true">
+            <li
+              v-for="(template, index) in templates"
+              :key="template.id"
+              :class="{ 'is-on': activeTemplate === index }"
+            />
+          </ol>
+        </div>
       </div>
-      <RouterLink class="button button--primary" :to="{ name: 'login', query: { mode: 'register' } }">
-        免费开始
-      </RouterLink>
     </section>
 
-    <footer class="welcome-footer">
-      <span>DayFlow · 让计划流动起来</span>
+    <section class="jr-band">
+      <div class="jr-shell">
+        <article
+          v-for="(item, index) in pillars"
+          :key="item.title"
+          :ref="registerReveal"
+          class="jr-pillar jr-slide"
+          :style="{ '--i': index }"
+        >
+          <span class="jr-pillar__dot" aria-hidden="true" />
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.text }}</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="preview" class="jr-preview">
+      <div class="jr-shell">
+        <header :ref="registerReveal" class="jr-head jr-slide">
+          <p class="jr-kicker">产品一览</p>
+          <h2>三个界面，一条完整的时间线</h2>
+        </header>
+
+        <div :ref="registerReveal" class="jr-preview__grid jr-slide">
+          <div class="jr-window">
+            <div class="jr-window__bar" aria-hidden="true">
+              <i /><i /><i />
+              <span>{{ shots[activeShot]!.title }}</span>
+            </div>
+            <div class="jr-window__frame">
+              <img
+                v-for="(shot, index) in shots"
+                :key="shot.id"
+                class="jr-window__shot"
+                :class="{ 'is-active': activeShot === index }"
+                :src="shot.image"
+                :alt="shot.alt"
+                :aria-hidden="activeShot === index ? undefined : 'true'"
+                decoding="async"
+              />
+            </div>
+          </div>
+
+          <ul class="jr-tabs">
+            <li v-for="(shot, index) in shots" :key="shot.id">
+              <button
+                type="button"
+                :class="{ 'is-active': activeShot === index }"
+                :aria-current="activeShot === index ? 'true' : undefined"
+                @click="showShot(index)"
+              >
+                <strong>{{ shot.kicker }}</strong>
+                <span>{{ shot.title }}</span>
+                <i class="jr-tabs__timer" aria-hidden="true" />
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="jr-closing">
+      <div class="jr-shell">
+        <div :ref="registerReveal" class="jr-closing__card jr-slide">
+          <h2>让今天的专注，落在计划上</h2>
+          <p>注册即用，数据存在你自己的空间里。</p>
+          <RouterLink class="jr-cta jr-cta--lg" :to="{ name: 'login', query: { mode: 'register' } }">
+            <span>免费开始</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+          </RouterLink>
+        </div>
+      </div>
+    </section>
+
+    <footer class="jr-footer">
+      <div class="jr-shell jr-footer__inner">
+        <AppLogo />
+        <span>DayFlow · 让计划流动起来</span>
+      </div>
     </footer>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  type ComponentPublicInstance,
+  type CSSProperties,
+} from 'vue'
 import { RouterLink } from 'vue-router'
 
 import AppLogo from '@/components/AppLogo.vue'
 
-const slides = [
-  {
-    id: 'task-tree-demo',
-    kind: 'demo',
-    kicker: '进度汇聚',
-    title: '看见每个任务如何推动项目完成',
-    description: '时间预算从叶子任务逐级汇聚，清晰呈现项目完成逻辑。',
-    image: '',
-    alt: '',
-  },
+const shots = [
   {
     id: 'today',
-    kind: 'image',
     kicker: '今天',
-    title: '把注意力留给眼前的一项任务',
-    description: '计时日历、专注计时和今日任务在同一页自然衔接。',
+    title: '专注计时与当日清单',
     image: '/welcome-today.png',
     alt: 'DayFlow 今日任务与专注计时界面',
   },
   {
-    id: 'analytics',
-    kind: 'image',
-    kicker: '时间统计',
-    title: '让每一段投入都有回响',
-    description: '从时间分布和趋势中看见节奏，及时修正计划。',
-    image: '/welcome-analytics.png',
-    alt: 'DayFlow 时间统计与趋势分析界面',
-  },
-  {
     id: 'tasks',
-    kind: 'image',
     kicker: '项目',
-    title: '用清晰结构承接复杂计划',
-    description: '在项目、模块和任务之间建立可执行的层级关系。',
+    title: '项目 → 模块 → 任务',
     image: '/welcome-tasks.png',
     alt: 'DayFlow 项目与任务管理界面',
   },
-] as const
-
-const highlights = [
-  {
-    title: '组织任务',
-    text: '用项目、模块和任务拆解复杂计划，结构清楚才执行得动。',
-    icon: '<svg viewBox="0 0 24 24"><path d="M4 6h7v5H4zM13 6h7v5h-7zM4 13h7v5H4zM13 13h7v5h-7z"/></svg>',
-  },
-  {
-    title: '记录投入',
-    text: '专注计时自动归集到任务与当日清单，不用手动记账。',
-    icon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.6 1.6M9.5 3.5h5"/></svg>',
-  },
-  {
-    title: '看见趋势',
-    text: '日、周、月、年多粒度回看节奏，及时调整下一轮计划。',
-    icon: '<svg viewBox="0 0 24 24"><path d="M4 19h16M6.5 19V11M11 19V6M15.5 19v-6M20 19V9"/></svg>',
-  },
-] as const
-
-const demoNodes = [
-  {
-    id: 'project',
-    title: 'DayFlow 发布',
-    estimate: '50h',
-    level: 'root',
-    branch: 'mixed',
-    left: '5%',
-    top: '40%',
-    width: '22%',
-    delay: '9.8s',
-  },
-  {
-    id: 'experience',
-    title: '体验设计',
-    estimate: '22h',
-    level: 'parent',
-    branch: 'experience',
-    left: '37%',
-    top: '17%',
-    width: '23%',
-    delay: '3.5s',
-  },
-  {
-    id: 'data',
-    title: '数据能力',
-    estimate: '28h',
-    level: 'parent',
-    branch: 'data',
-    left: '37%',
-    top: '65%',
-    width: '23%',
-    delay: '7.7s',
-  },
-  {
-    id: 'prototype',
-    title: '界面原型',
-    estimate: '6h',
-    level: 'leaf',
-    branch: 'experience',
-    left: '70%',
-    top: '5%',
-    width: '24%',
-    delay: '0.5s',
-  },
-  {
-    id: 'motion',
-    title: '任务树动效',
-    estimate: '16h',
-    level: 'leaf',
-    branch: 'experience',
-    left: '70%',
-    top: '27%',
-    width: '24%',
-    delay: '1.9s',
-  },
   {
     id: 'analytics',
-    title: '时间统计',
-    estimate: '8h',
-    level: 'leaf',
-    branch: 'data',
-    left: '70%',
-    top: '56%',
-    width: '24%',
-    delay: '4.7s',
+    kicker: '统计',
+    title: '趋势、分布与预算偏差',
+    image: '/welcome-analytics.png',
+    alt: 'DayFlow 时间统计与趋势分析界面',
+  },
+] as const
+
+const templates = [
+  {
+    id: 'study',
+    name: '学习课程',
+    icon: '📘',
+    accent: '#5b8cff',
+    text: '把一门课拆成章节与练习，按周推进。',
+    outline: ['课程大纲', '每章任务', '练习与复盘'],
+    meta: '适合网课、教材、语言学习',
   },
   {
-    id: 'sync',
-    title: '数据同步',
-    estimate: '20h',
-    level: 'leaf',
-    branch: 'data',
-    left: '70%',
-    top: '78%',
-    width: '24%',
-    delay: '6.1s',
+    id: 'exam',
+    name: '考试备考',
+    icon: '🎯',
+    accent: '#a58cff',
+    text: '倒推考试日期，安排复习轮次与模考。',
+    outline: ['考纲拆解', '三轮复习', '真题与模考'],
+    meta: '适合升学、证书、资格考试',
+  },
+  {
+    id: 'project',
+    name: '项目推进',
+    icon: '🚀',
+    accent: '#47d7b0',
+    text: '按里程碑组织模块，跟踪投入与偏差。',
+    outline: ['里程碑', '模块拆分', '交付与验收'],
+    meta: '适合毕设、副业、团队项目',
   },
 ] as const
 
-const demoConnections = [
-  { id: 'prototype-experience', path: 'M700 80 C650 80 650 153 600 153', delay: '1.7s' },
-  { id: 'motion-experience', path: 'M700 209 C650 209 650 153 600 153', delay: '3.1s' },
-  { id: 'experience-project', path: 'M370 153 C320 153 320 295 270 295', delay: '4.7s' },
-  { id: 'analytics-data', path: 'M700 380 C650 380 650 437 600 437', delay: '5.9s' },
-  { id: 'sync-data', path: 'M700 510 C650 510 650 437 600 437', delay: '7.3s' },
-  { id: 'data-project', path: 'M370 437 C320 437 320 295 270 295', delay: '8.9s' },
+const pillars = [
+  { title: '一节一节推进', text: '把课程拆成可执行的小节，每节都有自己的计划用时。' },
+  { title: '时间自动累积', text: '专注计时归集到每节课，学过多久不用自己记。' },
+  { title: '进度看得见', text: '完成度只认真实计时，不靠感觉估算。' },
 ] as const
 
-const activeSlide = ref(0)
-const demoCycle = ref(0)
+const lessons = [
+  { id: 'basics', title: 'Python 基础语法', hours: 6, topic: '语言基础' },
+  { id: 'data', title: '数据结构与算法', hours: 10, topic: '编程基本功' },
+  { id: 'math', title: '线性代数复习', hours: 8, topic: '数学准备' },
+  { id: 'intro', title: '机器学习导论', hours: 12, topic: '核心概念' },
+  { id: 'nn', title: '神经网络实战', hours: 14, topic: '动手实践' },
+  { id: 'capstone', title: '毕业项目', hours: 10, topic: '综合应用' },
+] as const
+
+const totalHours = lessons.reduce((sum, lesson) => sum + lesson.hours, 0)
+
+/** Fraction of the track spent on the closing celebration. */
+const FINALE_SHARE = 0.16
+
+const progress = ref(0)
+const templateProgress = ref(0)
+const scrollFlow = ref(0)
+const stageHeight = ref(720)
+/**
+ * Read before the first paint, so the page never renders its content and then
+ * fades it out again. Nothing is hidden unless `revealArmed` is on, which only
+ * happens when scripts run — a visitor without them reads a complete page.
+ */
+const reducedMotion = ref(
+  typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+)
+const revealArmed = ref(!reducedMotion.value)
 const scrolled = ref(false)
-const highlightsVisible = ref(false)
-const highlightsSection = ref<HTMLElement | null>(null)
-const tiltX = ref(0)
-const tiltY = ref(0)
+const activeShot = ref(0)
+const journeyEl = ref<HTMLElement | null>(null)
+const templatesEl = ref<HTMLElement | null>(null)
+const revealTargets = new Set<Element>()
+const magnet = ref({ x: 0, y: 0 })
 
-let autoplayTimer: number | undefined
-let observer: IntersectionObserver | undefined
+/** How far the lesson stream itself has run, ignoring the closing card. */
+const streamProgress = computed(() =>
+  Math.min(1, progress.value / (1 - FINALE_SHARE)),
+)
 
-const activeSlideMeta = computed(() => slides[activeSlide.value] ?? slides[0])
+/** The fractional lesson currently sitting in the middle of the stage. */
+const head = computed(() => streamProgress.value * lessons.length)
 
-const tiltStyle = computed(() => ({
-  '--tilt-x': `${tiltX.value}deg`,
-  '--tilt-y': `${tiltY.value}deg`,
-}))
-
-onMounted(() => {
-  startAutoplay()
-  window.addEventListener('scroll', onScroll, { passive: true })
-  onScroll()
-
-  observer = new IntersectionObserver(
-    (entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) highlightsVisible.value = true
-    },
-    { threshold: 0.2 },
-  )
-  if (highlightsSection.value) observer.observe(highlightsSection.value)
+/**
+ * Where the column sits, which is not the same as how far the head has run: a
+ * lesson stays parked in the centre while its bar fills, and only then slides
+ * up to let the next one in. Without the hold, a card drifted out of the
+ * centre while still only part-finished.
+ */
+const HOLD = 0.72
+const layoutHead = computed(() => {
+  const whole = Math.floor(head.value)
+  const frac = head.value - whole
+  return whole + (frac <= HOLD ? 0 : (frac - HOLD) / (1 - HOLD))
 })
 
-onBeforeUnmount(() => {
-  stopAutoplay()
-  window.removeEventListener('scroll', onScroll)
-  observer?.disconnect()
+const percent = computed(() => Math.round(streamProgress.value * 100))
+
+/**
+ * One wavelength is 120 user units, drawn well past both edges of the bowl so
+ * the shape can slide a full wavelength and repeat seamlessly.
+ */
+const WAVE_PATH =
+  'M-240 0q30-9 60 0t60 0t60 0t60 0t60 0t60 0t60 0t60 0V200H-240Z'
+
+/**
+ * Drives the background glows. It keeps rising a little past the journey so
+ * the wash also answers to scrolling on the sections below it.
+ */
+const flow = computed(() => Number(scrollFlow.value.toFixed(4)))
+
+/**
+ * Which template is centred. The head runs to the *last* index rather than
+ * past it, so reaching the end of the track leaves the third card in place
+ * instead of sliding it away.
+ */
+const templateHead = computed(
+  () => templateProgress.value * (templates.length - 1),
+)
+
+/** Each template holds the centre for most of its span, then hands over. */
+const templateLayoutHead = computed(() => {
+  const whole = Math.floor(templateHead.value)
+  const frac = templateHead.value - whole
+  return whole + (frac <= HOLD ? 0 : (frac - HOLD) / (1 - HOLD))
 })
 
-function startAutoplay(): void {
-  stopAutoplay()
-  autoplayTimer = window.setInterval(() => {
-    showSlide(activeSlide.value + 1)
-  }, 5_600)
+const activeTemplate = computed(() =>
+  Math.max(0, Math.min(templates.length - 1, Math.round(templateLayoutHead.value))),
+)
+
+function templateState(index: number): Record<string, boolean> {
+  return { 'is-active': activeTemplate.value === index }
 }
 
-function stopAutoplay(): void {
-  if (autoplayTimer !== undefined) window.clearInterval(autoplayTimer)
-  autoplayTimer = undefined
+function templateStyle(index: number): CSSProperties {
+  const delta = index - templateLayoutHead.value
+  const distance = Math.abs(delta)
+  const offset = delta * Math.max(150, Math.min(230, stageHeight.value * 0.26))
+  const scale = Math.max(0.82, 1 - distance * 0.09)
+  const opacity = Math.max(0, 1 - Math.max(0, distance - 0.35) * 1.25)
+  return {
+    transform: `translate3d(-50%, calc(-50% + ${offset.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`,
+    opacity: String(Number(opacity.toFixed(3))),
+    zIndex: String(50 - index),
+  }
 }
 
-function pauseAutoplay(): void {
-  stopAutoplay()
+/** Water surface: below the bowl when empty, above it when full. */
+const waterLevel = computed(() =>
+  Number((108 - 96 * streamProgress.value).toFixed(2)),
+)
+
+const completedCount = computed(() =>
+  Math.min(lessons.length, Math.floor(head.value)),
+)
+
+const investedHours = computed(() => {
+  let total = 0
+  lessons.forEach((lesson, index) => {
+    total += lesson.hours * lessonFill(index)
+  })
+  return Math.round(total)
+})
+
+/** 0 until the stream is done, then eases the celebration in. */
+const finale = computed(() => {
+  const start = 1 - FINALE_SHARE * 0.7
+  if (progress.value <= start) return 0
+  return Math.min(1, (progress.value - start) / (1 - start))
+})
+
+const journeyLabel =
+  '滚动驱动的学习旅程：课程逐节进入画面中央、进度条填满并完成后向上堆叠，计划完成度随滚动持续上升，最后展示全部完成的路线图'
+
+function lessonFill(index: number): number {
+  return Math.max(0, Math.min(1, head.value - index))
 }
 
-function showSlide(index: number): void {
-  const normalized = (index + slides.length) % slides.length
-  if (normalized === 0) demoCycle.value += 1
-  activeSlide.value = normalized
+function cardState(index: number): Record<string, boolean> {
+  // Read from the bar itself, so "completed" always means a full bar.
+  const fill = lessonFill(index)
+  return {
+    'is-done': fill >= 1,
+    'is-active': fill > 0 && fill < 1,
+    'is-next': fill <= 0,
+  }
+}
+
+/**
+ * Lay the lessons out as one continuous column that slides upward as the head
+ * advances. Finished lessons keep moving but with a much smaller gap, so they
+ * collect into a compact stack at the top instead of drifting off screen.
+ */
+function cardStyle(index: number): CSSProperties {
+  const spacing = Math.max(112, Math.min(168, stageHeight.value * 0.2))
+  const doneSpacing = 36
+  const delta = index - layoutHead.value
+  const distance = Math.abs(delta)
+  // Finished lessons collect into a small pile above the centre: tighter
+  // spacing, smaller, and fading out quickly so only the most recent few read.
+  // Below the centre lessons queue at full spacing. Above it they first clear
+  // the active card by `baseGap`, then pile up tightly. Splitting it this way
+  // keeps the motion continuous across the centre instead of jumping.
+  const baseGap = Math.max(104, spacing * 0.78)
+  const offset =
+    delta >= 0
+      ? delta * spacing
+      : delta > -1
+        ? delta * baseGap
+        : -(baseGap + (distance - 1) * doneSpacing)
+  const scale =
+    delta < 0
+      ? Math.max(0.66, 0.82 - (distance - 1) * 0.05)
+      : Math.max(0.86, 1 - distance * 0.05)
+  const opacity =
+    delta < 0
+      ? Math.max(0, 0.62 - Math.max(0, distance - 1) * 0.26)
+      : Math.max(0, 1 - Math.max(0, distance - 0.6) * 0.42)
+  return {
+    transform: `translate3d(-50%, calc(-50% + ${offset.toFixed(1)}px), 0) scale(${scale.toFixed(3)})`,
+    opacity: String(Number(opacity.toFixed(3))),
+    zIndex: String(100 - index),
+  }
+}
+
+const magnetStyle = computed<CSSProperties>(() =>
+  reducedMotion.value ? {} : { transform: `translate3d(${magnet.value.x}px, ${magnet.value.y}px, 0)` },
+)
+
+let shotTimer = 0
+let revealFallback = 0
+let motionQuery: MediaQueryList | null = null
+
+/** Collect the blocks that slide in and out with the scroll. */
+function registerReveal(element: Element | ComponentPublicInstance | null): void {
+  if (!(element instanceof Element)) return
+  revealTargets.add(element)
+}
+
+/**
+ * Slide blocks in as they rise past a line near the bottom of the viewport,
+ * and let them retract when they drop back below it. Measuring rects each time
+ * keeps the two directions exactly symmetric.
+ */
+function updateReveal(): void {
+  if (!revealArmed.value) return
+  const trigger = window.innerHeight * 0.86
+  for (const element of revealTargets) {
+    element.classList.toggle('is-in', element.getBoundingClientRect().top < trigger)
+  }
+}
+
+/**
+ * Turn scroll position into journey progress. The track is taller than the
+ * viewport and its stage is sticky, so the span between "track top reaches the
+ * top of the screen" and "track bottom does" is exactly the animation.
+ */
+function updateJourney(): void {
+  const section = journeyEl.value
+  if (!section) return
+  stageHeight.value = window.innerHeight
+  if (reducedMotion.value) {
+    progress.value = 1
+    return
+  }
+  const rect = section.getBoundingClientRect()
+  const travel = rect.height - window.innerHeight
+  if (travel <= 0) {
+    progress.value = rect.top <= 0 ? 1 : 0
+    return
+  }
+  progress.value = Math.max(0, Math.min(1, -rect.top / travel))
+}
+
+/** Same runway maths as the journey, for the template deck. */
+function updateTemplates(): void {
+  const section = templatesEl.value
+  if (!section) return
+  if (reducedMotion.value) {
+    templateProgress.value = 1
+    return
+  }
+  const rect = section.getBoundingClientRect()
+  const travel = rect.height - window.innerHeight
+  if (travel <= 0) {
+    templateProgress.value = rect.top <= 0 ? 1 : 0
+    return
+  }
+  templateProgress.value = Math.max(0, Math.min(1, -rect.top / travel))
 }
 
 function onScroll(): void {
+  // Browsers already fire scroll at most once per frame, and this reads a
+  // handful of rects; requestAnimationFrame here would only add a way for the
+  // work to be skipped when frames are throttled.
   scrolled.value = window.scrollY > 12
+  const travel = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+  scrollFlow.value = Math.max(0, Math.min(1, window.scrollY / travel))
+  updateJourney()
+  updateTemplates()
+  updateReveal()
 }
 
-/** Subtle pointer-driven tilt for the hero visual; clamped so it never distracts. */
-function trackPointer(event: PointerEvent): void {
-  if (event.pointerType !== 'mouse') return
-  const hero = event.currentTarget
-  if (!(hero instanceof HTMLElement)) return
-  const bounds = hero.getBoundingClientRect()
-  const ratioX = (event.clientX - bounds.left) / bounds.width - 0.5
-  const ratioY = (event.clientY - bounds.top) / bounds.height - 0.5
-  tiltY.value = Number((ratioX * 5).toFixed(2))
-  tiltX.value = Number((-ratioY * 4).toFixed(2))
+/** Let the primary call to action lean a little toward the cursor. */
+function trackMagnet(event: PointerEvent): void {
+  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  magnet.value = {
+    x: (event.clientX - bounds.left - bounds.width / 2) * 0.2,
+    y: (event.clientY - bounds.top - bounds.height / 2) * 0.28,
+  }
 }
 
-function resetTilt(): void {
-  tiltX.value = 0
-  tiltY.value = 0
+function resetMagnet(): void {
+  magnet.value = { x: 0, y: 0 }
 }
+
+function showShot(index: number): void {
+  activeShot.value = index
+  restartShotTimer()
+}
+
+function restartShotTimer(): void {
+  window.clearInterval(shotTimer)
+  if (reducedMotion.value) return
+  shotTimer = window.setInterval(() => {
+    activeShot.value = (activeShot.value + 1) % shots.length
+  }, 5200)
+}
+
+onMounted(() => {
+  motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  const onMotionChange = (event: MediaQueryListEvent): void => {
+    reducedMotion.value = event.matches
+    revealArmed.value = !event.matches
+    restartShotTimer()
+    onScroll()
+  }
+  motionQuery.addEventListener('change', onMotionChange)
+
+  window.addEventListener('scroll', onScroll, { passive: true })
+  window.addEventListener('resize', onScroll, { passive: true })
+  restartShotTimer()
+
+  onScroll()
+  // Template refs on a v-for can land after this hook; run once more when they
+  // have, so blocks already in view are revealed without a scroll.
+  void nextTick(updateReveal)
+
+  // If the refs never registered, stop hiding anything rather than leaving a
+  // blank page behind.
+  revealFallback = window.setTimeout(() => {
+    if (revealTargets.size === 0) revealArmed.value = false
+  }, 2000)
+
+  onBeforeUnmount(() => {
+    motionQuery?.removeEventListener('change', onMotionChange)
+  })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+  window.removeEventListener('resize', onScroll)
+  window.clearInterval(shotTimer)
+  window.clearTimeout(revealFallback)
+  revealTargets.clear()
+})
 </script>

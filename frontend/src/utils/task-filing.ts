@@ -68,3 +68,33 @@ export function projectFilingTargets(tasks: Task[]): FilingTarget[] {
   }
   return targets
 }
+
+/**
+ * Resolve the task-duration default for a filing destination. A module's own
+ * value wins; when it is unset, walk up to its project. Keeping this beside
+ * projectFilingTargets makes the Today quick-add form follow the same
+ * inheritance rule as the full task editor.
+ */
+export function inheritedTaskEstimate(
+  tasks: Task[],
+  parentId: string | null,
+): number | null {
+  if (!parentId) return null
+  const byId = new Map(tasks.map((task) => [task.id, task]))
+  const visited = new Set<string>()
+  let current = byId.get(parentId)
+
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id)
+    if (
+      (current.node_type === 'PROJECT' || current.node_type === 'MODULE') &&
+      current.default_estimated_seconds !== null &&
+      current.default_estimated_seconds > 0
+    ) {
+      return current.default_estimated_seconds
+    }
+    current = current.parent_id ? byId.get(current.parent_id) : undefined
+  }
+
+  return null
+}

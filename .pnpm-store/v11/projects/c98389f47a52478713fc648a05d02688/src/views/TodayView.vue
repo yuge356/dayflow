@@ -11,16 +11,12 @@
 
       <FormMessage :message="errorMessage || timer.syncError" />
 
-      <div v-if="!daily.online || daily.pendingCount > 0" class="sync-banner">
-        <strong>{{ daily.online ? '等待同步' : '当前离线' }}</strong>
-        <span>{{ daily.pendingCount }} 条任务或计划变更已保存在本机。</span>
-      </div>
-      <div v-if="daily.failedCount > 0" class="sync-banner sync-banner--error">
-        <strong>同步受阻</strong>
-        <span>
-          {{ daily.failedCount }} 条变更被服务器拒绝，仍保留在本机，请检查数据后重试。
-        </span>
-      </div>
+      <SyncStatusBanner
+        :pending-count="daily.pendingCount"
+        :failed-count="daily.failedCount"
+        :online="daily.online"
+        @repaired="reloadAfterRepair"
+      />
 
       <div class="today-focus-grid">
         <section
@@ -47,10 +43,10 @@
 
           <div class="focus-timer__body">
             <time class="focus-timer__display" aria-live="polite">
-              {{ timer.active ? formatTimer(timer.displaySeconds) : '00:00:00' }}
+              {{ timer.active ? formatTimer(timer.totalSeconds) : formatTimer(pendingStartSeconds) }}
             </time>
             <p v-if="timerTargetItem">
-              已投入 {{ formatDuration(displayActual(timerTargetItem)) }}
+              已投入 {{ usageLabel(timerTargetItem) }}
               <template v-if="timerTargetItem.estimated_seconds > 0">
                 · 计划 {{ formatDuration(timerTargetItem.estimated_seconds) }}
                 · 剩余 {{ formatDuration(timerRemainingSeconds) }}
@@ -60,6 +56,33 @@
             <p v-if="timer.targetNotice" class="focus-timer__notice" role="status">
               <strong>时间提醒：</strong>{{ timer.targetNotice }}
             </p>
+
+            <div class="timer-mode" role="group" aria-label="到达计划用时后如何处理">
+              <span class="timer-mode__label">到达计划用时后</span>
+              <button
+                type="button"
+                :class="{ 'timer-mode__button--active': !timer.autoStopAtTarget }"
+                :aria-pressed="!timer.autoStopAtTarget"
+                :disabled="stopModeLocked"
+                :title="stopModeLocked ? stopModeLockedHint : '继续累计超出的时间，由你手动暂停或结束'"
+                @click="timer.setAutoStopAtTarget(false)"
+              >
+                手动停止
+              </button>
+              <button
+                type="button"
+                :class="{ 'timer-mode__button--active': timer.autoStopAtTarget }"
+                :aria-pressed="timer.autoStopAtTarget"
+                :disabled="stopModeLocked"
+                :title="stopModeLocked ? stopModeLockedHint : '刚好用满计划用时就自动停表，之后仍可继续或标记完成'"
+                @click="timer.setAutoStopAtTarget(true)"
+              >
+                自动停止
+              </button>
+              <span v-if="stopModeLocked" class="timer-mode__lock" role="note">
+                {{ stopModeLockedHint }}
+              </span>
+            </div>
           </div>
 
           <div class="focus-timer__actions">
@@ -82,8 +105,23 @@
               >
                 继续
               </button>
-              <button class="button button--finish" type="button" :disabled="timer.busy" @click="finish">
+              <button
+                class="button button--finish"
+                type="button"
+                :disabled="timer.busy"
+                title="停止计时并保留已记录的时长，稍后可以继续"
+                @click="stopTiming"
+              >
                 结束计时
+              </button>
+              <button
+                class="button button--quiet"
+                type="button"
+                :disabled="timer.busy"
+                title="结束计时并把任务标记为已完成"
+                @click="completeActive"
+              >
+                完成任务
               </button>
             </template>
             <button
@@ -93,7 +131,7 @@
               :disabled="!selectedTimerItem || timer.busy"
               @click="startSelectedItem"
             >
-              {{ selectedTimerItem ? '开始计时' : '请先选择任务' }}
+              {{ selectedTimerItem ? (pendingStartSeconds > 0 ? '继续计时' : '开始计时') : '请先选择任务' }}
             </button>
           </div>
         </section>
@@ -114,7 +152,7 @@
           <p v-if="daily.loading" class="empty-state">正在读取计划…</p>
           <div v-else-if="daily.plan?.items.length === 0" class="today-empty">
             <strong>今天还没有任务</strong>
-            <span>从项目中挑一项任务，或添加一个临时事项。</span>
+            <span>在项目里安排到今天的任务会自动出现在这里，也可以在下面直接新建一个。</span>
           </div>
 
           <TransitionGroup v-else tag="ol" name="daily-list" class="daily-item-list">
@@ -134,7 +172,7 @@
                 :class="{ 'daily-check--done': item.status === 'DONE' }"
                 type="button"
                 :aria-label="item.status === 'DONE' ? `将${item.title}标为未完成` : `完成${item.title}`"
-                :disabled="daily.saving || isTiming(item)"
+                :disabled="daily.saving || timer.busy"
                 @click="toggleDone(item)"
               >
                 {{ item.status === 'DONE' ? '✓' : '' }}
@@ -157,7 +195,7 @@
               </button>
 
               <div class="daily-item-usage">
-                <strong>{{ isTiming(item) ? formatTimer(timer.displaySeconds) : formatDuration(displayActual(item)) }}</strong>
+                <strong>{{ isTiming(item) ? formatTimer(timer.totalSeconds) : usageLabel(item) }}</strong>
                 <span v-if="isOverrun(item)" class="daily-overrun">⚠ 已超时 {{ formatDuration(overrunSeconds(item)) }}</span>
                 <span v-else>{{ progressPercent(item) }}% 用时</span>
               </div>
@@ -182,7 +220,13 @@
                   >
                     继续
                   </button>
-                  <button class="button button--finish button--small" type="button" :disabled="timer.busy" @click="finish">
+                  <button
+                    class="button button--finish button--small"
+                    type="button"
+                    :disabled="timer.busy"
+                    title="停止计时并保留已记录的时长，稍后可以继续"
+                    @click="stopTiming"
+                  >
                     结束
                   </button>
                 </template>
@@ -213,26 +257,81 @@
           <details ref="quickAddDetails" class="quick-add">
             <summary>+ 添加今日任务</summary>
             <div class="quick-add__body">
-              <div class="quick-add__tabs" role="group" aria-label="任务类型">
-                <button type="button" :class="{ active: itemKind === 'task' }" @click="itemKind = 'task'">项目任务</button>
-                <button type="button" :class="{ active: itemKind === 'adhoc' }" @click="itemKind = 'adhoc'">临时事项</button>
+              <p class="quick-add__hint">
+                选择一个还没加入今天的可计时项目或任务，也可以直接新建任务。
+              </p>
+              <div class="quick-add__tabs" role="group" aria-label="添加方式">
+                <button type="button" :class="{ active: itemKind === 'existing' }" @click="itemKind = 'existing'">
+                  选择已有
+                </button>
+                <button type="button" :class="{ active: itemKind === 'new' }" @click="itemKind = 'new'">
+                  新建任务
+                </button>
               </div>
-              <form class="quick-add__form" @submit.prevent="addItem">
-                <select v-if="itemKind === 'task'" v-model="planTaskId" class="quick-add__select" required aria-label="选择项目任务">
-                  <option value="">选择项目任务…</option>
+
+              <form v-if="itemKind === 'existing'" class="quick-add__form" @submit.prevent="addItem">
+                <select v-model="planTaskId" class="quick-add__select" required aria-label="选择已有项目或任务">
+                  <option value="">选择还没加入今天的项目或任务…</option>
                   <option v-for="task in availableTasks" :key="task.id" :value="task.id">
-                    {{ projectPrefixedTaskTitle(task, tasks.items) }}
+                    {{ availableTaskLabel(task) }}
                   </option>
                 </select>
-                <input v-else v-model.trim="adHocTitle" class="quick-add__input" maxlength="200" placeholder="输入临时事项…" required aria-label="临时事项名称" />
                 <label class="quick-add__duration">
-                  <input v-model.number="estimatedMinutes" type="number" min="0" max="5256000" class="quick-add__minutes" aria-label="计划分钟数" />
+                  <input v-model.number="estimatedMinutes" type="number" min="1" max="5256000" step="1" class="quick-add__minutes" aria-label="计划分钟数" />
                   <span>分钟</span>
                 </label>
-                <button class="button button--primary button--small" type="submit" :disabled="daily.saving || !canAdd">
-                  {{ daily.saving ? '添加中…' : '添加' }}
+                <button
+                  class="button button--primary button--small"
+                  type="submit"
+                  :disabled="quickAddBusy || !canAdd"
+                  :aria-busy="quickAddBusy"
+                  :title="quickAddButtonTitle"
+                >
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
                 </button>
               </form>
+
+              <form v-else class="quick-add__form" @submit.prevent="addItem">
+                <input
+                  v-model.trim="newTaskTitle"
+                  class="quick-add__input"
+                  maxlength="200"
+                  required
+                  :placeholder="newTaskPlaceholder"
+                  aria-label="任务名称"
+                />
+                <label class="quick-add__select-field">
+                  <span class="sr-only">归入哪个项目</span>
+                  <select v-model="newTaskParentId" class="quick-add__select">
+                    <option value="">临时任务（暂不归入项目）</option>
+                    <option v-for="target in fileTargets" :key="target.id" :value="target.id">
+                      {{ target.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="quick-add__duration">
+                  <input v-model.number="estimatedMinutes" type="number" min="1" max="5256000" step="1" class="quick-add__minutes" aria-label="计划分钟数" />
+                  <span>分钟</span>
+                </label>
+                <button
+                  class="button button--primary button--small"
+                  type="submit"
+                  :disabled="quickAddBusy || !canAdd"
+                  :aria-busy="quickAddBusy"
+                  :title="quickAddButtonTitle"
+                >
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
+                </button>
+              </form>
+              <p v-if="itemKind === 'existing'" class="quick-add__hint quick-add__hint--muted">
+                只加入今天，不修改原排期；只有没有下级的任务、空项目或空模块可以直接计时。
+              </p>
+              <p v-else-if="quickAddInheritedSeconds !== null" class="quick-add__hint quick-add__hint--muted">
+                已同步所选归属的新任务默认用时（包含从项目继承的值）；你仍可直接修改分钟数。
+              </p>
+              <p v-if="itemKind === 'new' && !newTaskParentId" class="quick-add__hint quick-add__hint--muted">
+                临时任务会归档到项目页的“临时任务”里，之后可以随时归入某个项目。
+              </p>
             </div>
           </details>
         </section>
@@ -241,9 +340,8 @@
       <GanttChart
         :rows="ganttRows"
         :today="todayDate"
-        :loading="ganttLoading"
+        :loading="ganttPending"
         :error="ganttError"
-        @plan-change="updateTaskPlan"
       />
 
       <div class="today-bottom-grid">
@@ -414,6 +512,7 @@ import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue
 
 import AppShell from '@/components/AppShell.vue'
 import FormMessage from '@/components/FormMessage.vue'
+import SyncStatusBanner from '@/components/SyncStatusBanner.vue'
 import GanttChart from '@/components/GanttChart.vue'
 import { analyticsService } from '@/services/analytics'
 import { useAuthStore } from '@/stores/auth'
@@ -429,6 +528,7 @@ import type {
 import type { DailyPlanItem } from '@/types/daily-plan'
 import type { Task } from '@/types/task'
 import { getApiErrorMessage } from '@/utils/api-error'
+import { inheritedTaskEstimate, isInboxProject, projectFilingTargets } from '@/utils/task-filing'
 import { projectPrefixedTaskTitle } from '@/utils/task-title'
 import { formatDuration, formatDurationCompact } from '@/utils/time'
 import { formatTimer } from '@/utils/timer'
@@ -451,9 +551,10 @@ const focusDate = ref(localDateString())
 const ganttSeries = ref<TaskDailySeries[]>([])
 const ganttLoading = ref(false)
 const ganttError = ref('')
-const itemKind = ref<'task' | 'adhoc'>('task')
+const itemKind = ref<'existing' | 'new'>('existing')
 const planTaskId = ref('')
-const adHocTitle = ref('')
+const newTaskTitle = ref('')
+const newTaskParentId = ref('')
 const estimatedMinutes = ref(30)
 const selectedItemId = ref('')
 const errorMessage = ref('')
@@ -464,6 +565,7 @@ let ganttRequestId = 0
 let lastActivationRefreshAt = 0
 const ACTIVATION_REFRESH_INTERVAL_MS = 60_000
 const GANTT_RANGE_DAYS = 365
+const QUICK_ADD_FALLBACK_MINUTES = 30
 
 const displayDate = computed(() =>
   new Date(`${todayDate.value}T00:00:00`).toLocaleDateString('zh-CN', {
@@ -547,7 +649,7 @@ const distributionHours = computed(() => {
   return Array.from({ length: 24 }, (_, hour) => {
     const recorded = base.find((point) => point.hour === hour)?.seconds ?? 0
     const seconds = hour === currentHour.value && focusDate.value === todayDate.value
-      ? recorded + liveTimerExtra.value
+      ? recorded + activeItemLiveDelta.value
       : recorded
     return {
       hour,
@@ -573,9 +675,12 @@ const distributionAriaLabel = computed(() =>
 const focusTooltip = ref<{ hour: number; seconds: number; x: number; y: number } | null>(null)
 const tasksById = computed(() => new Map(tasks.items.map((task) => [task.id, task])))
 function buildGanttRow(task: Task, series: TaskDailySeries | null): GanttChartRow | null {
-  const title = projectPrefixedTaskTitle(task, tasks.items)
+  // The chart groups by project and module, so the row keeps its own plain
+  // title instead of the project-prefixed label used by daily-plan snapshots.
+  const title = task.title
   if (!title) return null
   const project = rootProjectOf(task)
+  const module = moduleOf(task, project)
   const plannedStart = task.planned_start_date ?? null
   const plannedEnd = task.planned_end_date ?? null
   const firstDate = series?.daily[0]?.date ?? plannedStart
@@ -591,13 +696,19 @@ function buildGanttRow(task: Task, series: TaskDailySeries | null): GanttChartRo
     lastDate,
     days: series?.daily ?? [],
     projectId: project?.id ?? null,
-    projectTitle: project?.title ?? '未关联项目',
+    projectTitle: project?.title ?? '临时任务',
+    moduleId: module?.id ?? null,
+    moduleTitle: module?.title ?? '',
     status: task.status,
+    // Progress is measured time against the plan. Completing a task by hand
+    // must not fill the bar: the chart reports the time this app actually
+    // recorded, and a task finished in half its budget should look that way.
+    // With no plan to measure against, completion is all there is to show.
     progressRatio:
-      task.status === 'DONE'
-        ? 1
-        : task.estimated_seconds > 0
-          ? Math.min(1, task.actual_seconds / task.estimated_seconds)
+      task.estimated_seconds > 0
+        ? Math.min(1, task.actual_seconds / task.estimated_seconds)
+        : task.status === 'DONE'
+          ? 1
           : null,
     activeDays: series?.daily.length ?? 0,
     spanDays: dayDiff(firstDate, lastDate) + 1,
@@ -628,17 +739,25 @@ const ganttRows = computed<GanttChartRow[]>(() => {
   }
   return rows
 })
+// Every row is resolved against the task tree, so the chart has nothing to draw
+// until the tasks have arrived too. Reporting only the analytics request made a
+// half-finished load look like an empty plan: the series landed first, rows came
+// out empty, and the panel claimed there was no schedule until the tree caught up.
+const ganttPending = computed(() => ganttLoading.value || tasks.loading)
 
-// 甘特图拖拽排期：把计划窗口写回任务的 planned dates；失败时 store 会回滚本地状态。
-async function updateTaskPlan(payload: { taskId: string; start: string; end: string }): Promise<void> {
-  try {
-    await tasks.update(payload.taskId, {
-      planned_start_date: payload.start,
-      planned_end_date: payload.end,
-    })
-  } catch (error) {
-    ganttError.value = getApiErrorMessage(error)
+/** The module a task sits in, or null when it hangs directly off the project. */
+function moduleOf(task: Task, project: Task | null): Task | null {
+  if (!project) return null
+  let current = task
+  const visited = new Set<string>()
+  while (current.parent_id && !visited.has(current.id)) {
+    visited.add(current.id)
+    const parent = tasksById.value.get(current.parent_id)
+    if (!parent || parent.id === project.id) return null
+    if (parent.node_type === 'MODULE') return parent
+    current = parent
   }
+  return null
 }
 
 function rootProjectOf(task: Task): Task | null {  let current = task
@@ -664,12 +783,108 @@ const parentTaskIds = computed(
 )
 const availableTasks = computed(() =>
   tasks.items.filter(
-    (task) => !parentTaskIds.value.has(task.id) && !plannedTaskIds.value.has(task.id),
+    (task) =>
+      !parentTaskIds.value.has(task.id) &&
+      !plannedTaskIds.value.has(task.id) &&
+      task.status !== 'DONE' &&
+      !isInboxProject(task),
   ),
 )
-const canAdd = computed(() =>
-  itemKind.value === 'task' ? Boolean(planTaskId.value) : Boolean(adHocTitle.value),
+/** Projects and modules a newly captured task can be filed under. */
+const fileTargets = computed(() => projectFilingTargets(tasks.items))
+const quickAddInheritedSeconds = computed(() =>
+  inheritedTaskEstimate(tasks.items, newTaskParentId.value || null),
 )
+/**
+ * Name the destination rather than asking "要做什么": the box already sits
+ * under 今日任务, so the useful context is which project the task will join.
+ */
+const newTaskPlaceholder = computed(() => {
+  const target = fileTargets.value.find((option) => option.id === newTaskParentId.value)
+  return target ? `在「${target.name}」里新建任务…` : '临时任务名称…'
+})
+const normalizedEstimatedMinutes = computed(() => {
+  const value = Number(estimatedMinutes.value)
+  return Number.isFinite(value) ? Math.round(value) : 0
+})
+const quickAddBusy = computed(() => daily.loading || daily.saving || tasks.saving)
+const canAdd = computed(() =>
+  (itemKind.value === 'existing' ? Boolean(planTaskId.value) : Boolean(newTaskTitle.value)) &&
+  Boolean(daily.plan) &&
+  normalizedEstimatedMinutes.value > 0 &&
+  normalizedEstimatedMinutes.value <= 5_256_000,
+)
+const quickAddButtonTitle = computed(() => {
+  if (daily.loading || !daily.plan) return '正在准备今日计划'
+  if (daily.saving || tasks.saving) return '正在添加任务'
+  if (itemKind.value === 'existing' && !planTaskId.value) return '请先选择要加入今天的项目或任务'
+  if (itemKind.value === 'new' && !newTaskTitle.value) return '请先填写任务名称'
+  if (normalizedEstimatedMinutes.value <= 0) return '计划用时至少为 1 分钟'
+  if (normalizedEstimatedMinutes.value > 5_256_000) return '计划用时不能超过 5256000 分钟'
+  return '添加到今日任务'
+})
+
+watch(newTaskParentId, () => {
+  if (itemKind.value !== 'new') return
+  estimatedMinutes.value = quickAddInheritedSeconds.value === null
+    ? QUICK_ADD_FALLBACK_MINUTES
+    : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
+})
+
+watch(planTaskId, (taskId) => {
+  if (itemKind.value !== 'existing') return
+  const task = tasks.items.find((candidate) => candidate.id === taskId)
+  if (!task) return
+  const initialSeconds = task.estimated_seconds > 0
+    ? task.estimated_seconds
+    : inheritedTaskEstimate(tasks.items, task.id)
+      ?? task.fixed_budget_seconds
+      ?? task.planned_seconds
+  estimatedMinutes.value = initialSeconds > 0
+    ? Math.max(1, Math.floor(initialSeconds / 60))
+    : QUICK_ADD_FALLBACK_MINUTES
+})
+
+watch(itemKind, (kind) => {
+  if (kind === 'new') {
+    estimatedMinutes.value = quickAddInheritedSeconds.value === null
+      ? QUICK_ADD_FALLBACK_MINUTES
+      : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
+    return
+  }
+  const selected = tasks.items.find((task) => task.id === planTaskId.value)
+  if (!selected) estimatedMinutes.value = QUICK_ADD_FALLBACK_MINUTES
+})
+
+const repeatLabels: Record<Task['repeat_rule'], string> = {
+  NONE: '不重复',
+  DAILY: '每天重复',
+  WEEKDAYS: '工作日重复',
+  WEEKLY: '每周重复',
+  MONTHLY: '每月重复',
+}
+
+function shortDate(date: string): string {
+  const [, month, day] = date.split('-')
+  return `${Number(month)}月${Number(day)}日`
+}
+
+function availableTaskLabel(task: Task): string {
+  const title = projectPrefixedTaskTitle(task, tasks.items)
+  if (task.node_type === 'PROJECT') return `${title} · 空项目`
+  if (task.node_type === 'MODULE') return `${title} · 空模块`
+  if (task.repeat_rule !== 'NONE') return `${title} · ${repeatLabels[task.repeat_rule]}`
+  if (task.due_date) return `${title} · 截止 ${shortDate(task.due_date)}`
+  const start = task.planned_start_date
+  const end = task.planned_end_date
+  if (start || end) {
+    const from = start ? shortDate(start) : '不限'
+    const to = end ? shortDate(end) : '不限'
+    return `${title} · 安排 ${from}–${to}`
+  }
+  return `${title} · 未安排`
+}
+
 const orderedDailyItems = computed(() => {
   const items = [...(daily.plan?.items ?? [])]
   return items.sort((left, right) => {
@@ -689,17 +904,29 @@ const orderedDailyItems = computed(() => {
 })
 /**
  * Seconds accrued by the running timer since the last server-persisted
- * snapshot. Added on top of server-known values so learning time, budget
- * remaining and the daily list all tick live while timing. Completed timer
- * actions update the local snapshot immediately and synchronize separately.
+ * snapshot. Used for a timer with no daily item behind it, where there is no
+ * accumulated item total to compare against.
  */
 const liveTimerExtra = computed(() => {
   if (!timer.active || timer.active.snapshot.status !== 'RUNNING') return 0
   return Math.max(0, timer.displaySeconds - timer.active.snapshot.duration_seconds)
 })
 
+/**
+ * How far the timer face has run ahead of the timed item's last known total.
+ * Both the check-in and the item totals count the running session, so this
+ * difference — and not the raw session duration — is what the day's figures
+ * still owe the clock. It falls back to zero as soon as a refresh catches up.
+ */
+const activeItemLiveDelta = computed(() => {
+  if (!timer.active) return 0
+  const item = activeTimerItem.value
+  if (!item) return liveTimerExtra.value
+  return Math.max(0, timer.totalSeconds - item.actual_seconds)
+})
+
 const displayLearningSeconds = computed(
-  () => (daily.checkIn?.learning_seconds ?? 0) + liveTimerExtra.value,
+  () => (daily.checkIn?.learning_seconds ?? 0) + activeItemLiveDelta.value,
 )
 const selectedTimerItem = computed(() =>
   daily.plan?.items.find((item) => item.id === selectedItemId.value && item.status !== 'DONE'),
@@ -720,29 +947,30 @@ const timerTargetTitle = computed(() => {
   return '选择一个今日任务'
 })
 const timerStateLabel = computed(() => {
-  if (!timer.active) return '等待开始'
-  return timer.active.snapshot.status === 'RUNNING' ? '计时中' : '已暂停'
+  if (timer.active) {
+    return timer.active.snapshot.status === 'RUNNING' ? '计时中' : '已暂停'
+  }
+  // The idle face already shows the selected task's accumulated time, so say
+  // which of the two it is rather than always reading "等待开始" above 00:25:00.
+  return pendingStartSeconds.value > 0 ? '可继续' : '等待开始'
 })
+/**
+ * What the idle face shows: the selected task's accumulated time, which is
+ * also the point a new session continues from.
+ */
+const pendingStartSeconds = computed(() => selectedTimerItem.value?.actual_seconds ?? 0)
+/**
+ * The stop mode is a property of the run you are about to start, so it is
+ * fixed once a session exists. Switching it mid-session would either stop a
+ * running task on the spot (when it is already past its planned time) or
+ * quietly change the deal partway through.
+ */
+const stopModeLocked = computed(() => Boolean(timer.active))
+const stopModeLockedHint = '计时进行中不能切换，请先结束当前计时。'
 const timerRemainingSeconds = computed(() => {
   const item = timerTargetItem.value
   if (!item || item.estimated_seconds <= 0) return 0
   return Math.max(0, item.estimated_seconds - displayActual(item))
-})
-
-// Selecting a task pre-fills the planned duration with the task's own
-// configured initial duration; the user can still adjust it afterwards.
-// Empty projects are directly actionable, so their per-task default is the
-// closest equivalent to an executable task's estimated duration. A fixed
-// project budget is only used when no per-task default was configured.
-watch(planTaskId, (taskId) => {
-  const task = tasks.items.find((item) => item.id === taskId)
-  if (!task) return
-  const initialSeconds = task.estimated_seconds > 0
-    ? task.estimated_seconds
-    : (task.default_estimated_seconds ?? task.fixed_budget_seconds ?? 0)
-  if (initialSeconds > 0) {
-    estimatedMinutes.value = Math.max(1, Math.round(initialSeconds / 60))
-  }
 })
 
 watch(calendarMonth, () => {
@@ -905,15 +1133,18 @@ function hideFocusTooltip(): void {
   focusTooltip.value = null
 }
 
-async function loadTaskGantt(): Promise<void> {
-  const requestId = ++ganttRequestId
+function ganttRangeStart(): string {
   const start = new Date(`${todayDate.value}T00:00:00`)
   start.setDate(start.getDate() - GANTT_RANGE_DAYS)
-  const dateFrom = localDateString(start)
+  return localDateString(start)
+}
+
+async function loadTaskGantt(): Promise<void> {
+  const requestId = ++ganttRequestId
   ganttLoading.value = true
   ganttError.value = ''
   try {
-    const response = await analyticsService.taskDaily(dateFrom, todayDate.value)
+    const response = await analyticsService.taskDaily(ganttRangeStart(), todayDate.value)
     if (requestId === ganttRequestId) {
       ganttSeries.value = response.tasks
     }
@@ -926,6 +1157,74 @@ async function loadTaskGantt(): Promise<void> {
     if (requestId === ganttRequestId) {
       ganttLoading.value = false
     }
+  }
+}
+
+/**
+ * Load the calendar, the hourly focus bars and the Gantt rows through one
+ * request. Issuing them separately made the page open three heavy analytics
+ * queries at once; on the backend's small connection pool the surplus ones
+ * timed out, which is why the progress chart and the time statistics kept
+ * showing a red server error over empty panels.
+ */
+async function loadTodayCharts(): Promise<void> {
+  ensureCalendarMonth()
+  ensureFocusDate()
+  const { year, month } = calendarMonthParts.value
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`
+  const lastDay = new Date(year, month, 0).getDate()
+  const calendarRequest = ++calendarRequestId
+  const distributionRequest = ++distributionRequestId
+  const ganttRequest = ++ganttRequestId
+  const params = {
+    calendarFrom: `${monthPrefix}-01`,
+    calendarTo: `${monthPrefix}-${String(lastDay).padStart(2, '0')}`,
+    focusDay: focusDate.value,
+    ganttFrom: ganttRangeStart(),
+    ganttTo: todayDate.value,
+  }
+  const cacheKey = Object.values(params).join('|')
+
+  // Paint last visit's charts straight away. A remote round trip took long
+  // enough that the calendar, the focus bars and the progress chart all sat
+  // empty on every arrival, even though the numbers rarely move between
+  // visits; the fresh response replaces them in place below.
+  const cached = analyticsService.peekTodayOverview(cacheKey)
+  if (cached) {
+    calendarTrend.value = cached.calendar_trend
+    hourlyTrend.value = cached.hourly_focus
+    ganttSeries.value = cached.task_daily.tasks
+  }
+
+  calendarLoading.value = !cached
+  distributionLoading.value = !cached
+  ganttLoading.value = !cached
+  calendarError.value = ''
+  distributionError.value = ''
+  ganttError.value = ''
+  try {
+    const overview = await analyticsService.todayOverview(params)
+    analyticsService.storeTodayOverview(cacheKey, overview)
+    if (calendarRequest === calendarRequestId) calendarTrend.value = overview.calendar_trend
+    if (distributionRequest === distributionRequestId) hourlyTrend.value = overview.hourly_focus
+    if (ganttRequest === ganttRequestId) ganttSeries.value = overview.task_daily.tasks
+  } catch (error) {
+    // Cached charts stay on screen: a failed refresh is not a reason to blank
+    // panels the user could still read.
+    const message = getApiErrorMessage(error)
+    if (calendarRequest === calendarRequestId) calendarError.value = message
+    if (distributionRequest === distributionRequestId) {
+      if (!cached) hourlyTrend.value = null
+      distributionError.value = message
+    }
+    if (ganttRequest === ganttRequestId) {
+      if (!cached) ganttSeries.value = []
+      ganttError.value = message
+    }
+  } finally {
+    if (calendarRequest === calendarRequestId) calendarLoading.value = false
+    if (distributionRequest === distributionRequestId) distributionLoading.value = false
+    if (ganttRequest === ganttRequestId) ganttLoading.value = false
   }
 }
 
@@ -942,28 +1241,49 @@ onMounted(async () => {
   const ownerId = auth.user?.profile.id
   if (!ownerId) return
   try {
-    await timer.initialize(ownerId)
-    const activeItemId = timer.active?.snapshot.daily_plan_item_id ?? null
+    // Mark the chart panels busy up front. Their request is deferred to the end
+    // of this handler, and without this they would spend the gap looking loaded
+    // but empty -- which is exactly the "no schedule yet" flash being fixed.
+    calendarLoading.value = true
+    distributionLoading.value = true
+    ganttLoading.value = true
+    // The task tree and today's plan are what this page is for, and neither
+    // needs the timer to fetch -- the timer only says which plan item is
+    // running. Queueing them behind timer.initialize(), which makes its own
+    // round trip to restore a running session, kept the tree empty for as long
+    // as that took, so the progress chart rendered "no schedule yet" and
+    // today's scheduled project tasks arrived late. Start them now and hand
+    // the plan the timer's answer once it lands.
     const requiresTaskLoad = tasks.ownerId !== ownerId || tasks.items.length === 0
     const requiresDailyLoad =
       daily.ownerId !== ownerId ||
       daily.selectedDate !== todayDate.value ||
       !daily.plan
-    if (requiresTaskLoad || requiresDailyLoad) {
-      await Promise.all([
-        requiresTaskLoad ? tasks.initialize(ownerId) : Promise.resolve(),
-        requiresDailyLoad
-          ? daily.initialize(ownerId, todayDate.value, activeItemId)
-          : Promise.resolve(daily.setActiveItem(activeItemId)),
-        loadCalendarMonth(),
-        loadHourlyFocus(),
-        loadTaskGantt(),
-      ])
-    } else {
-      daily.setActiveItem(activeItemId)
-      await Promise.all([loadCalendarMonth(), loadHourlyFocus(), loadTaskGantt()])
+    const tasksLoaded = requiresTaskLoad ? tasks.initialize(ownerId) : Promise.resolve()
+    const dailyLoaded = requiresDailyLoad
+      ? daily.initialize(ownerId, todayDate.value)
+      : Promise.resolve()
+
+    await timer.initialize(ownerId)
+    daily.setActiveItem(timer.active?.snapshot.daily_plan_item_id ?? null)
+
+    // Settled, not all: a failure in one panel must not leave the rest of the
+    // page blank. Each loader records its own error next to what it renders.
+    const results = await Promise.allSettled([tasksLoaded, dailyLoaded])
+    const failure = results.find((result) => result.status === 'rejected')
+    if (failure) {
+      errorMessage.value = getApiErrorMessage((failure as PromiseRejectedResult).reason)
     }
+    // The charts follow the two above rather than racing them. The overview is
+    // the heavy query and the backend pool is only four connections wide
+    // (pool_size=2 + max_overflow=2), so opening it alongside them left the
+    // plan list waiting on a pool slot behind it. It is also the panel the
+    // user reads last, and the progress chart cannot draw a row until the task
+    // tree has arrived anyway. It records its own per-panel errors and never
+    // rejects, so nothing here needs its result.
+    void loadTodayCharts()
     await restoreMissingActiveItem()
+    await adoptTimerBaseline()
     await daily.syncProjectTasks()
   } catch (error) {
     errorMessage.value = getApiErrorMessage(error)
@@ -1017,13 +1337,24 @@ onActivated(() => {
   })
 })
 
-function liveExtra(item: DailyPlanItem): number {
-  if (!isTiming(item)) return 0
-  return liveTimerExtra.value
+/**
+ * Time invested in one daily item today. The timed item reads straight off
+ * the timer face, so the focus panel, this row and the floating bar can never
+ * drift apart — and a server refresh mid-session cannot double-count the
+ * seconds the running session has already contributed.
+ */
+function displayActual(item: DailyPlanItem): number {
+  return isTiming(item) ? timer.totalSeconds : item.actual_seconds
 }
 
-function displayActual(item: DailyPlanItem): number {
-  return item.actual_seconds + liveExtra(item)
+/**
+ * Recorded time for one item. Zero means the task was never timed — which is
+ * a normal state for a task ticked off by hand — so it must not borrow
+ * formatDuration's "未设置", which describes a missing plan.
+ */
+function usageLabel(item: DailyPlanItem): string {
+  const seconds = displayActual(item)
+  return seconds > 0 ? formatDuration(seconds) : '未计时'
 }
 
 async function restoreMissingActiveItem(): Promise<void> {
@@ -1049,6 +1380,17 @@ async function restoreMissingActiveItem(): Promise<void> {
     title: task ? projectPrefixedTaskTitle(task, tasks.items) : '进行中的临时事项',
     estimated_seconds: task?.estimated_seconds ?? timer.targetSeconds ?? 0,
   })
+}
+
+/**
+ * A session restored from the server (or from another device) carries no
+ * local baseline. Hand it the item's accumulated time once the plan is
+ * loaded so the face keeps showing the task's whole clock.
+ */
+async function adoptTimerBaseline(): Promise<void> {
+  const item = activeTimerItem.value
+  if (!item) return
+  await timer.adoptBaseSeconds(item.actual_seconds)
 }
 
 function isTiming(item: DailyPlanItem): boolean {
@@ -1078,6 +1420,7 @@ function statusLabel(item: DailyPlanItem): string {
   if (isTiming(item)) {
     return timer.active?.snapshot.status === 'RUNNING' ? '正在专注' : '计时已暂停'
   }
+  if (item.actual_seconds > 0) return '已计时，未完成'
   if (item.status === 'IN_PROGRESS') return '进行中'
   if (item.status === 'PAUSED') return '已暂停'
   return '待开始'
@@ -1096,7 +1439,7 @@ function startItemLabel(item: DailyPlanItem): string {
   if (item.status === 'DONE') return '已完成'
   if (timer.active?.snapshot.status === 'PAUSED') return '切换并开始'
   if (timer.active?.snapshot.status === 'RUNNING') return '请先暂停'
-  return '开始'
+  return item.actual_seconds > 0 ? '继续' : '开始'
 }
 
 function startItemTitle(item: DailyPlanItem): string {
@@ -1106,7 +1449,22 @@ function startItemTitle(item: DailyPlanItem): string {
     return '保存当前已暂停的计时，然后开始该任务'
   }
   if (timer.active?.snapshot.status === 'RUNNING') return '请先暂停当前计时'
-  return '开始该任务的计时'
+  return item.actual_seconds > 0
+    ? `从已计时的 ${formatDuration(item.actual_seconds)} 继续`
+    : '开始该任务的计时'
+}
+
+/** Pull fresh data after the user retried or discarded a quarantined write. */
+async function reloadAfterRepair(): Promise<void> {
+  errorMessage.value = ''
+  try {
+    await Promise.all([
+      tasks.load({ silent: true }),
+      daily.load(todayDate.value, { silent: true }),
+    ])
+  } catch (error) {
+    errorMessage.value = getApiErrorMessage(error)
+  }
 }
 
 async function runAction(action: () => Promise<void>): Promise<void> {
@@ -1125,25 +1483,60 @@ async function runTimerAction(action: () => Promise<void>): Promise<void> {
   })
 }
 
+/**
+ * Add an existing executable node, or capture a new task and add it in one
+ * operation. Empty projects/modules are executable until they gain children;
+ * containers with children are intentionally absent from the picker.
+ */
 async function addItem(): Promise<void> {
   await runAction(async () => {
-    const selectedTask = tasks.items.find((task) => task.id === planTaskId.value)
-    await daily.addItem({
-      task_id: itemKind.value === 'task' ? planTaskId.value : null,
-      ...(itemKind.value === 'adhoc'
-        ? { title: adHocTitle.value }
-        : selectedTask
-          ? { title: projectPrefixedTaskTitle(selectedTask, tasks.items) }
-          : {}),
-      estimated_seconds: Math.round(estimatedMinutes.value * 60),
+    // Never create the project-side task before the date-scoped plan exists.
+    // During a cold/slow load the form used to submit while `daily.plan` was
+    // still null, leaving an orphan task behind and no row under 今日任务.
+    if (!daily.plan) await daily.load(todayDate.value)
+    if (!daily.plan) throw new Error('Daily plan is not loaded')
+    const estimatedSeconds = normalizedEstimatedMinutes.value * 60
+    if (itemKind.value === 'existing') {
+      const selectedTask = tasks.items.find((task) => task.id === planTaskId.value)
+      if (!selectedTask) throw new Error('Task not found')
+      await daily.addItem({
+        task_id: selectedTask.id,
+        title: projectPrefixedTaskTitle(selectedTask, tasks.items),
+        estimated_seconds: estimatedSeconds,
+      })
+      planTaskId.value = ''
+      return
+    }
+    const created = await tasks.create({
+      title: newTaskTitle.value,
+      parent_id: newTaskParentId.value || null,
+      node_type: 'TASK',
+      estimated_seconds: estimatedSeconds,
+      due_date: todayDate.value,
+      repeat_rule: 'NONE',
+      daily_reminder_time: null,
     })
-    planTaskId.value = ''
-    adHocTitle.value = ''
+    await daily.addItem({
+      task_id: created.id,
+      title: projectPrefixedTaskTitle(created, tasks.items),
+      estimated_seconds: estimatedSeconds,
+    })
+    newTaskTitle.value = ''
   })
 }
 
+/**
+ * Marking a task done never needs a timer: the statistics only ever count
+ * time this app measured, so completing a task simply closes it with
+ * whatever was timed. A task being timed right now is stopped first, so its
+ * measured seconds are recorded before the task closes.
+ */
 async function toggleDone(item: DailyPlanItem): Promise<void> {
   const newStatus = item.status === 'DONE' ? 'TODO' : 'DONE'
+  if (newStatus === 'DONE' && isTiming(item)) {
+    await completeActive()
+    return
+  }
   await runAction(async () => {
     await daily.updateItem(item.id, {
       status: newStatus,
@@ -1161,15 +1554,20 @@ async function startItem(item: DailyPlanItem): Promise<void> {
   const previousItem = activeTimerItem.value
   const previousActualSeconds = previousItem ? displayActual(previousItem) : 0
   await runTimerAction(async () => {
-    const remaining = item.estimated_seconds - item.actual_seconds
-    const remainingSeconds = item.estimated_seconds > 0 && remaining > 0
-      ? remaining
-      : null
+    const targetSeconds = item.estimated_seconds > 0 ? item.estimated_seconds : null
     const executableTaskId = tasks.items.some((task) => task.id === item.task_id)
       ? item.task_id
       : null
-    await timer.start(executableTaskId, item.id, remainingSeconds)
-    if (previousItem && previousItem.id !== item.id) {
+    // The new session continues the task's own clock: everything it has
+    // already accumulated today is the baseline the face counts up from, so
+    // a task ended early resumes at the point it stopped. Restarting the item
+    // a paused timer already sat on keeps that timer's reading too, which the
+    // item total has not necessarily been given yet.
+    const baseSeconds = previousItem?.id === item.id
+      ? Math.max(item.actual_seconds, previousActualSeconds)
+      : item.actual_seconds
+    await timer.start(executableTaskId, item.id, targetSeconds, baseSeconds)
+    if (previousItem) {
       await daily.applyStoppedTimer(previousItem.id, previousActualSeconds)
     }
     if (item.status !== 'IN_PROGRESS') {
@@ -1185,23 +1583,36 @@ async function startSelectedItem(): Promise<void> {
 
 async function pause(): Promise<void> {
   const item = activeTimerItem.value
-  const actualSeconds = item ? displayActual(item) : 0
   await runTimerAction(async () => {
     await timer.pause()
-    if (item) await daily.applyStoppedTimer(item.id, actualSeconds)
+    // Read the face after the pause: it now holds the session's final second.
+    if (item) await daily.applyStoppedTimer(item.id, displayActual(item))
   })
-  if (calendarMonth.value === todayDate.value.slice(0, 7)) {
-    await loadCalendarMonth()
-  }
-  void loadHourlyFocus()
-  void loadTaskGantt()
+  refreshTimeCharts()
 }
 
 async function resume(): Promise<void> {
   await runTimerAction(() => timer.resume())
 }
 
-async function finish(): Promise<void> {
+/**
+ * End the session without closing the task. The measured time is kept and
+ * the item stays startable, so a task stopped before its planned time is
+ * used up can be picked up again later and keep counting from there.
+ */
+async function stopTiming(): Promise<void> {
+  const item = activeTimerItem.value
+  const actualSeconds = item ? displayActual(item) : 0
+  await runAction(async () => {
+    await timer.finish(false)
+    daily.setActiveItem(null)
+    if (item) await daily.applyEndedTimer(item.id, actualSeconds)
+  })
+  refreshTimeCharts()
+}
+
+/** End the session and mark the task complete in one step. */
+async function completeActive(): Promise<void> {
   const item = activeTimerItem.value
   const actualSeconds = item ? displayActual(item) : 0
   await runAction(async () => {
@@ -1214,7 +1625,11 @@ async function finish(): Promise<void> {
       }
     }
   })
-  // 刷新全部在后台进行：本地状态已更新，UI 立即回到可操作状态。
+  refreshTimeCharts()
+}
+
+// 刷新全部在后台进行：本地状态已更新，UI 立即回到可操作状态。
+function refreshTimeCharts(): void {
   if (calendarMonth.value === todayDate.value.slice(0, 7)) {
     void loadCalendarMonth()
   }

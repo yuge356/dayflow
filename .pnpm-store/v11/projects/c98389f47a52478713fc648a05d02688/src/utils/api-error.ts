@@ -87,6 +87,8 @@ const messageTranslations: Record<string, string> = {
   'Daily plan store is not initialized': '今日任务数据尚未准备完成，请刷新页面后重试。',
   'Daily plan is not loaded': '今日任务尚未加载完成，请刷新页面后重试。',
   'Timer store is not initialized': '计时数据尚未准备完成，请刷新页面后重试。',
+  'Task hierarchy was rejected by the database; run pending migrations':
+    '数据库还没有执行最新的迁移，暂时不接受没有归入项目的“临时任务”。请对同一个数据库执行 alembic upgrade head 后重试。',
   'Internal Server Error': '服务器内部错误，请检查数据库配置或稍后重试。',
   'Server error': '服务器处理异常，请稍后重试。',
 }
@@ -112,8 +114,24 @@ function translateMessage(message: string): string | null {
   if (/String should have at least/i.test(normalized)) return '输入内容长度不足。'
   if (/String should have at most/i.test(normalized)) return '输入内容长度超过限制。'
   if (/Internal Server Error/i.test(normalized)) return '服务器内部错误，请检查数据库配置或稍后重试。'
+  // A missing table means the database is behind the code: surface the fix
+  // instead of an asyncpg class name the user cannot act on.
+  if (/UndefinedTableError|relation "[^"]+" does not exist/i.test(normalized)) {
+    return '数据库缺少所需的数据表，请重启本地服务以执行数据库迁移（corepack pnpm dev）后重试。'
+  }
   if (/[\u3400-\u9fff]/.test(normalized)) return normalized
   return null
+}
+
+/**
+ * Translate one server `detail` string on its own — used for writes the
+ * offline queue quarantined, where the original response is long gone and
+ * only the stored reason remains. Unknown messages are returned unchanged
+ * rather than hidden behind a generic sentence.
+ */
+export function translateApiDetail(detail: string | null | undefined): string {
+  if (!detail) return ''
+  return translateMessage(detail) ?? detail
 }
 
 function statusMessage(status?: number): string {

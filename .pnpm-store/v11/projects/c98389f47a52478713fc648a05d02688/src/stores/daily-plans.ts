@@ -40,6 +40,7 @@ interface DailyPlanState {
   listenerBound: boolean
   rolloverDate: string
   rolloverTimerId: number | null
+  importingProjectTasks: boolean
 }
 
 function localDateString(date = new Date()): string {
@@ -60,6 +61,29 @@ function recalculatePlan(plan: DailyPlan): DailyPlan {
     actual_seconds: plan.items.reduce((sum, item) => sum + item.actual_seconds, 0),
     updated_at: new Date().toISOString(),
   }
+}
+
+/**
+ * Drop every queued operation for a daily item that is being discarded. A
+ * duplicate created locally must never reach the server later and re-create
+ * the second row this merge just removed.
+ */
+async function discardQueuedItemOperations(
+  ownerId: string,
+  itemIds: Set<string>,
+): Promise<void> {
+  if (itemIds.size === 0) return
+  const operations = await localDb.syncOperations
+    .where('owner_id')
+    .equals(ownerId)
+    .toArray()
+  const staleIds = operations
+    .filter(
+      (operation) =>
+        operation.entity_type === 'daily_plan_item' && itemIds.has(operation.entity_id),
+    )
+    .map((operation) => operation.id)
+  if (staleIds.length > 0) await localDb.syncOperations.bulkDelete(staleIds)
 }
 
 function parseLocalDate(value: string): Date {
@@ -98,6 +122,22 @@ function taskRepeatsOnDate(task: Task, targetDate: string): boolean {
   return false
 }
 
+/**
+ * Whether a task is scheduled to be worked on one date. Mirrors the backend
+ * rule exactly: recurrence, an explicit due date, or a planned window drawn
+ * on the Gantt chart all place the task in that day's list. Scheduling a task
+ * on the projects page is therefore all it takes for it to appear under 今日任务.
+ */
+export function taskScheduledOnDate(task: Task, targetDate: string): boolean {
+  if (task.node_type !== 'TASK' || task.status === 'DONE') return false
+  if (taskRepeatsOnDate(task, targetDate)) return true
+  if (task.due_date === targetDate) return true
+  const start = task.planned_start_date
+  const end = task.planned_end_date
+  if (!start && !end) return false
+  return (start ?? targetDate) <= targetDate && targetDate <= (end ?? targetDate)
+}
+
 export const useDailyPlanStore = defineStore('daily-plans', {
   state: (): DailyPlanState => ({
     ownerId: null,
@@ -113,6 +153,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
     listenerBound: false,
     rolloverDate: localDateString(),
     rolloverTimerId: null,
+    importingProjectTasks: false,
   }),
 
   actions: {
@@ -241,6 +282,19 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       }
       this.online = navigator.onLine
       try {
+        // Show the cached day first: a remote round trip takes far longer
+        // than an IndexedDB read, and the refresh below replaces it in place.
+        if (!this.plan) {
+          const cached = await readCachedDailyPlan(this.ownerId, targetDate)
+          if (cached) {
+            this.plan = cached
+            await this.buildLocalCheckIn()
+            // The cached day is on screen, so stop reporting a load. TodayView
+            // hides the list behind `loading`, which kept "正在读取计划…" up for
+            // the whole server round trip and wasted this read entirely.
+            this.loading = false
+          }
+        }
         if (this.online) {
           try {
             this.pendingCount = await syncPendingChanges(this.ownerId)
@@ -258,27 +312,15 @@ export const useDailyPlanStore = defineStore('daily-plans', {
               this.plan =
                 (await readCachedDailyPlan(this.ownerId, targetDate)) ??
                 (await this.createLocalPlan())
-              await this.autoPopulateLocalRecurringItems()
+              await this.autoPopulateLocalScheduledItems()
               await this.buildLocalCheckIn()
               return
             }
-            let serverPlan: DailyPlan
-            try {
-              serverPlan = await dailyPlanService.readByDate(targetDate)
-            } catch (error) {
-              if (!axios.isAxiosError(error) || error.response?.status !== 404) throw error
-              serverPlan = await dailyPlanService.create(targetDate)
-            }
-            serverPlan = await this.repairMissingServerItems(serverPlan)
+            // One request does find-or-create, schedule fill-in and check-in.
+            const opened = await dailyPlanService.open(targetDate)
+            const serverPlan = await this.repairMissingServerItems(opened.plan)
             this.plan = await this.mergeServerPlan(serverPlan)
-            try {
-              const populated = await dailyPlanService.autoPopulate(this.plan.id)
-              this.plan = await this.mergeServerPlan(populated)
-            } catch (error) {
-              if (!isNetworkError(error)) throw error
-              this.online = false
-            }
-            this.checkIn = await dailyPlanService.checkIn(targetDate)
+            this.checkIn = opened.check_in
             return
           } catch {
             this.online = false
@@ -287,7 +329,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
 
         this.plan = (await readCachedDailyPlan(this.ownerId, targetDate)) ?? null
         if (!this.plan) this.plan = await this.createLocalPlan()
-        await this.autoPopulateLocalRecurringItems()
+        await this.autoPopulateLocalScheduledItems()
         this.pendingCount = await pendingSyncCount(this.ownerId)
         this.failedCount = await getFailedSyncCount(this.ownerId)
         await this.buildLocalCheckIn()
@@ -305,8 +347,30 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         pendingOps.filter((op) => op.action === 'delete').map((op) => op.entity_id),
       )
       const serverIds = new Set(serverPlan.items.map((item) => item.id))
+      // The server fills a day in from the schedule too, and it allocates its
+      // own item ids. A cached item whose task already has a server row is
+      // that same task under a second id, so restoring it would show the task
+      // twice under 今日任务 forever.
+      const serverTaskIds = new Set(
+        serverPlan.items.flatMap((item) => (item.task_id ? [item.task_id] : [])),
+      )
+      const duplicateIds = new Set(
+        cachedPlan.items
+          .filter(
+            (item) =>
+              !serverIds.has(item.id) &&
+              item.id !== this.activeItemId &&
+              item.task_id !== null &&
+              serverTaskIds.has(item.task_id),
+          )
+          .map((item) => item.id),
+      )
+      await discardQueuedItemOperations(this.ownerId, duplicateIds)
       const missingItems = cachedPlan.items.filter(
-        (item) => !serverIds.has(item.id) && !deletedIds.has(item.id),
+        (item) =>
+          !serverIds.has(item.id) &&
+          !deletedIds.has(item.id) &&
+          !duplicateIds.has(item.id),
       )
       if (missingItems.length === 0) return serverPlan
 
@@ -363,7 +427,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       return recalculatePlan({ ...serverPlan, items: repaired })
     },
 
-    async autoPopulateLocalRecurringItems(): Promise<void> {
+    async autoPopulateLocalScheduledItems(): Promise<void> {
       if (!this.ownerId || !this.plan) return
       const taskNodes = await localDb.cachedTasks
         .where('owner_id')
@@ -372,10 +436,15 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       const existingTaskIds = new Set(
         this.plan.items.flatMap((item) => (item.task_id ? [item.task_id] : [])),
       )
+      // A task that owns subtasks is a container and can never be timed.
+      const parentIds = new Set(
+        taskNodes.flatMap((task) => (task.parent_id ? [task.parent_id] : [])),
+      )
       const dueTasks = taskNodes.filter(
         (task) =>
           !existingTaskIds.has(task.id) &&
-          taskRepeatsOnDate(task, this.selectedDate),
+          !parentIds.has(task.id) &&
+          taskScheduledOnDate(task, this.selectedDate),
       )
       if (dueTasks.length === 0) return
 
@@ -437,9 +506,30 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           .map((item) =>
             pendingIds.has(item.id) ? (cachedById.get(item.id) ?? item) : item,
           )
-        const retainedLocalItems = cachedPlan.items
-          .filter((item) => !serverIds.has(item.id) && !deletedIds.has(item.id))
-          .map((item) => ({ ...item, daily_plan_id: serverPlan.id }))
+        // One task belongs in a day once. A local item whose task the server
+        // already scheduled is a duplicate of it under another id: drop it and
+        // forget its queued write instead of listing the task twice.
+        const keptTaskIds = new Set(
+          items.flatMap((item) => (item.task_id ? [item.task_id] : [])),
+        )
+        const duplicateIds = new Set<string>()
+        const retainedLocalItems: DailyPlanItem[] = []
+        for (const item of cachedPlan.items) {
+          if (serverIds.has(item.id) || deletedIds.has(item.id)) continue
+          if (
+            item.task_id !== null &&
+            keptTaskIds.has(item.task_id) &&
+            // The row a timer is running against always stays: the server
+            // collapses the pair in favour of the timed one on the next open.
+            item.id !== this.activeItemId
+          ) {
+            duplicateIds.add(item.id)
+            continue
+          }
+          if (item.task_id !== null) keptTaskIds.add(item.task_id)
+          retainedLocalItems.push({ ...item, daily_plan_id: serverPlan.id })
+        }
+        await discardQueuedItemOperations(this.ownerId, duplicateIds)
         merged = recalculatePlan({ ...serverPlan, items: [...items, ...retainedLocalItems] })
       }
       await saveCachedDailyPlan(merged)
@@ -486,8 +576,34 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       })
     },
 
-    async addItem(payload: DailyPlanItemCreate): Promise<void> {
+    /**
+     * Replay the outbox without blocking the caller. Every daily-plan edit is
+     * applied to the cache first, so the interaction is finished by the time
+     * this runs; a rejected write surfaces through `failedCount` instead.
+     */
+    scheduleBackgroundFlush(): void {
+      void this.flushAndRefresh().catch(async () => {
+        if (this.ownerId) this.failedCount = await getFailedSyncCount(this.ownerId)
+      })
+    },
+
+    async addItem(
+      payload: DailyPlanItemCreate,
+      options: { deferSync?: boolean } = {},
+    ): Promise<void> {
       if (!this.ownerId || !this.plan) throw new Error('Daily plan is not loaded')
+      // A project task occupies one slot per day. Two concurrent imports (the
+      // route activation and the server's own schedule fill-in) would
+      // otherwise each add it under a different id. Restoring the row a timer
+      // is running against is the one exception: its session already points
+      // at that id.
+      if (
+        payload.task_id &&
+        payload.id !== this.activeItemId &&
+        this.plan.items.some((item) => item.task_id === payload.task_id)
+      ) {
+        return
+      }
       this.saving = true
       const now = new Date().toISOString()
       const id = payload.id ?? crypto.randomUUID()
@@ -520,10 +636,9 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         this.pendingCount = await pendingSyncCount(this.ownerId)
         // Adding a task is cache-first. The shared outbox serializes the
         // identical server write in the background, avoiding a visible wait
-        // for both the item request and a second check-in request.
-        void this.flushAndRefresh().catch(async () => {
-          this.failedCount = await getFailedSyncCount(this.ownerId!)
-        })
+        // for both the item request and a second check-in request. Bulk
+        // callers defer the flush so one import triggers one sync.
+        if (!options.deferSync) this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
@@ -534,7 +649,27 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       taskId: string,
       estimatedSeconds: number,
     ): Promise<void> {
-      const normalizedSeconds = Math.max(0, Math.round(estimatedSeconds))
+      await this.syncLinkedTaskSnapshot(ownerId, taskId, {
+        estimated_seconds: estimatedSeconds,
+      })
+    },
+
+    /**
+     * Push a task's edited fields into the daily items that reference it.
+     * Daily items are snapshots, so only today and future days follow the
+     * task: past days keep the title and budget they were planned with.
+     */
+    async syncLinkedTaskSnapshot(
+      ownerId: string,
+      taskId: string,
+      fields: { title?: string; estimated_seconds?: number },
+    ): Promise<void> {
+      const changes: Partial<Pick<DailyPlanItem, 'title' | 'estimated_seconds'>> = {}
+      if (fields.title !== undefined) changes.title = fields.title
+      if (fields.estimated_seconds !== undefined) {
+        changes.estimated_seconds = Math.max(0, Math.round(fields.estimated_seconds))
+      }
+      if (Object.keys(changes).length === 0) return
       const today = localDateString()
       const plans = await localDb.cachedDailyPlans
         .where('owner_id')
@@ -553,7 +688,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
             linkedIds.has(item.id)
               ? {
                   ...item,
-                  estimated_seconds: normalizedSeconds,
+                  ...changes,
                   updated_at: new Date().toISOString(),
                 }
               : item,
@@ -567,7 +702,7 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         for (const item of linkedItems) {
           await enqueueSyncOperation(ownerId, 'daily_plan_item', item.id, 'update', {
             daily_plan_id: plan.id,
-            estimated_seconds: normalizedSeconds,
+            ...changes,
           })
         }
       }
@@ -595,6 +730,30 @@ export const useDailyPlanStore = defineStore('daily-plans', {
         items: this.plan.items.map((item) => (item.id === itemId ? finished : item)),
       })
       this.pushTimerSecondsToTasks(existing, finished.actual_seconds)
+      await saveCachedDailyPlan(this.plan)
+      await this.buildLocalCheckIn()
+    },
+
+    /**
+     * Record the time of a timer the user ended without finishing the task.
+     * The item keeps every timed second and returns to a resumable state, so
+     * a task stopped early can be started again later that day.
+     */
+    async applyEndedTimer(itemId: string, actualSeconds: number): Promise<void> {
+      if (!this.plan) return
+      const existing = this.plan.items.find((item) => item.id === itemId)
+      if (!existing) return
+      const stopped: DailyPlanItem = {
+        ...existing,
+        status: existing.status === 'DONE' ? existing.status : 'PAUSED',
+        actual_seconds: Math.max(existing.actual_seconds, actualSeconds),
+        updated_at: new Date().toISOString(),
+      }
+      this.plan = recalculatePlan({
+        ...this.plan,
+        items: this.plan.items.map((item) => (item.id === itemId ? stopped : item)),
+      })
+      this.pushTimerSecondsToTasks(existing, stopped.actual_seconds)
       await saveCachedDailyPlan(this.plan)
       await this.buildLocalCheckIn()
     },
@@ -656,7 +815,10 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           daily_plan_id: this.plan.id,
         })
         await this.buildLocalCheckIn()
-        await this.flushAndRefresh()
+        // Cache-first, like addItem: ticking a task off or switching timers
+        // must not wait on an outbox replay. The shared queue performs the
+        // identical server write in the background.
+        this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
@@ -675,19 +837,19 @@ export const useDailyPlanStore = defineStore('daily-plans', {
           daily_plan_id: this.plan.id,
         })
         await this.buildLocalCheckIn()
-        await this.flushAndRefresh()
+        this.scheduleBackgroundFlush()
       } finally {
         this.saving = false
       }
     },
 
     /**
-     * Import project tasks that are due today (by `due_date` or repeat rule)
-     * but not yet present in today's daily plan. Safe to call repeatedly —
-     * tasks already referenced by an existing plan item are skipped.
+     * Import every project task scheduled for today that is not already in
+     * today's plan. Safe to call repeatedly — tasks already referenced by an
+     * existing plan item are skipped.
      */
     async syncProjectTasks(): Promise<void> {
-      if (!this.plan || !this.ownerId) return
+      if (!this.plan || !this.ownerId || this.importingProjectTasks) return
       const today = localDateString()
       if (this.selectedDate !== today) return
 
@@ -700,18 +862,30 @@ export const useDailyPlanStore = defineStore('daily-plans', {
       )
       const candidates = taskStore.items.filter(
         (task) =>
-          task.node_type === 'TASK' &&
-          task.status !== 'DONE' &&
           !existingTaskIds.has(task.id) &&
           !parentIds.has(task.id) &&
-          (task.due_date === today || taskRepeatsOnDate(task, today)),
+          taskScheduledOnDate(task, today),
       )
-      for (const task of candidates) {
-        await this.addItem({
-          task_id: task.id,
-          title: projectPrefixedTaskTitle(task, taskStore.items),
-          estimated_seconds: task.estimated_seconds,
-        })
+      // Queue all of them before flushing: addItem's per-item background sync
+      // would otherwise fire one request per task at the same moment. The
+      // in-flight flag keeps a second caller (route activation, task refresh
+      // and plan refresh all trigger one) from importing the same task again
+      // before these writes reach the plan.
+      this.importingProjectTasks = true
+      try {
+        for (const task of candidates) {
+          await this.addItem(
+            {
+              task_id: task.id,
+              title: projectPrefixedTaskTitle(task, taskStore.items),
+              estimated_seconds: task.estimated_seconds,
+            },
+            { deferSync: true },
+          )
+        }
+        if (candidates.length > 0) this.scheduleBackgroundFlush()
+      } finally {
+        this.importingProjectTasks = false
       }
     },
   },

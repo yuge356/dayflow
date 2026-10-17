@@ -8,11 +8,14 @@ import {
   saveCachedTasks,
 } from '@/db/local'
 import {
+  getFailedSyncCount,
   getPendingOperations,
   isNetworkError,
   syncPendingChanges,
 } from '@/services/offline-sync'
 import { taskService } from '@/services/tasks'
+import { useTimerStore } from '@/stores/timer'
+import { isInboxProject } from '@/utils/task-filing'
 import type {
   Task,
   TaskBulkApplyPayload,
@@ -29,12 +32,27 @@ interface TaskState {
   saving: boolean
   online: boolean
   pendingCount: number
+  failedCount: number
   listenerBound: boolean
 }
 
 function compareTasks(left: Task, right: Task): number {
   if (left.sort_order !== right.sort_order) return left.sort_order - right.sort_order
   return left.created_at.localeCompare(right.created_at)
+}
+
+/**
+ * A task that is still waiting to be filed. That means one sitting in the
+ * 临时任务 holding project, and also one created locally a moment ago: the
+ * browser captures it with no parent and the server answers with the holding
+ * project, so both shapes are the same thing to the user.
+ */
+export function isUnfiledTask(
+  task: Pick<Task, 'node_type' | 'parent_id'>,
+  inboxProjectId: string | null,
+): boolean {
+  if (task.node_type !== 'TASK') return false
+  return task.parent_id === null || task.parent_id === inboxProjectId
 }
 
 function budgetLevel(estimatedSeconds: number, actualSeconds: number): Task['budget_level'] {
@@ -66,6 +84,35 @@ function updateWasApplied(task: Task, payload: TaskUpdatePayload): boolean {
 const FLUSH_DEBOUNCE_MS = 600
 const flushTimers = new Map<string, number>()
 
+/**
+ * Guards against an older server snapshot overwriting a newer one. `load`
+ * and `flush` can overlap (route activation, debounced flush, focus retry);
+ * whichever fetch started first used to be able to finish last and replace
+ * the item list — and prune the local cache — with a list that predates a
+ * just-created project, making it vanish from the projects page.
+ */
+let listSequence = 0
+
+/**
+ * Local writes and list refreshes share the same IndexedDB cache. Serialize
+ * the writes so a refresh that begins while a project/task is being captured
+ * cannot read the cache between its row and outbox operation being saved.
+ */
+let localMutationBarrier: Promise<void> = Promise.resolve()
+
+function runLocalMutation<T>(action: () => Promise<T>): Promise<T> {
+  const result = localMutationBarrier.then(action, action)
+  localMutationBarrier = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
+
+function listRequestIsCurrent(sequence?: number): boolean {
+  return sequence === undefined || sequence === listSequence
+}
+
 export const useTaskStore = defineStore('tasks', {
   state: (): TaskState => ({
     ownerId: null,
@@ -74,23 +121,60 @@ export const useTaskStore = defineStore('tasks', {
     saving: false,
     online: navigator.onLine,
     pendingCount: 0,
+    failedCount: 0,
     listenerBound: false,
   }),
 
   getters: {
     tree(state): TaskNode[] {
+      // Seconds the running timer has accrued since its last persisted
+      // snapshot. Folding them in here keeps the projects page in step with
+      // the Today page while a task is being timed: the roll-up below carries
+      // the delta up through every module and project above the task.
+      const timer = useTimerStore()
+      const running =
+        timer.active?.snapshot.status === 'RUNNING' ? timer.active.snapshot : null
+      const liveTaskId = running?.task_id ?? null
+      const liveSeconds = running
+        ? Math.max(0, timer.displaySeconds - running.duration_seconds)
+        : 0
+
       const nodes = new Map<string, TaskNode>()
-      state.items.forEach((task) => nodes.set(task.id, {
-        ...task,
-        priority: task.priority ?? 'MEDIUM',
-        due_date: task.due_date ?? null,
-        dependency_ids: task.dependency_ids ?? [],
-        children: [],
-      }))
+      state.items.forEach((task) => {
+        const extra = liveSeconds > 0 && task.id === liveTaskId ? liveSeconds : 0
+        nodes.set(task.id, {
+          ...task,
+          priority: task.priority ?? 'MEDIUM',
+          due_date: task.due_date ?? null,
+          dependency_ids: task.dependency_ids ?? [],
+          direct_actual_seconds: task.direct_actual_seconds + extra,
+          actual_seconds: task.actual_seconds + extra,
+          children: [],
+        })
+      })
       const roots: TaskNode[] = []
+      // Every task must end up on screen. A node whose parent is missing --
+      // or whose ancestor chain loops back on itself after a bad offline
+      // replay -- is promoted to a root instead of silently disappearing
+      // from the projects page while still showing up everywhere else (the
+      // today page's task picker reads the same flat list).
+      const hasAncestorCycle = (node: TaskNode): boolean => {
+        const seen = new Set<string>([node.id])
+        let current: TaskNode | undefined = node
+        while (current?.parent_id) {
+          const parent = nodes.get(current.parent_id)
+          // A chain that simply runs out of ancestors is not a cycle: that
+          // orphan becomes a root itself and keeps its descendants.
+          if (!parent) return false
+          if (seen.has(parent.id)) return true
+          seen.add(parent.id)
+          current = parent
+        }
+        return false
+      }
       nodes.forEach((node) => {
         const parent = node.parent_id ? nodes.get(node.parent_id) : undefined
-        if (parent) parent.children.push(node)
+        if (parent && !hasAncestorCycle(node)) parent.children.push(node)
         else roots.push(node)
       })
       const sortTree = (items: TaskNode[]): void => {
@@ -142,6 +226,39 @@ export const useTaskStore = defineStore('tasks', {
       roots.forEach(summarize)
       return roots
     },
+
+    /** The holding project's id, once the server has created it. */
+    inboxProjectId(state): string | null {
+      return state.items.find(isInboxProject)?.id ?? null
+    },
+
+    /**
+     * Roots that represent a project the user made (or a node orphaned by a
+     * broken parent chain). The 临时任务 holding project and the tasks inside
+     * it are left out: they are listed on their own instead.
+     */
+    projectTree(): TaskNode[] {
+      const inboxId = this.inboxProjectId as string | null
+      return (this.tree as TaskNode[]).filter(
+        (node) => !isInboxProject(node) && !isUnfiledTask(node, inboxId),
+      )
+    },
+
+    /**
+     * Quick "临时任务" waiting to be filed. They are ordinary executable tasks
+     * — timeable, schedulable, countable — and filing one under a project is
+     * a plain `parent_id` update.
+     */
+    unfiledTasks(): TaskNode[] {
+      const inboxId = this.inboxProjectId as string | null
+      const held = (this.tree as TaskNode[]).find(
+        (node) => node.id === inboxId,
+      )?.children
+      const loose = (this.tree as TaskNode[]).filter((node) =>
+        isUnfiledTask(node, inboxId),
+      )
+      return [...(held ?? []), ...loose]
+    },
   },
 
   actions: {
@@ -176,14 +293,16 @@ export const useTaskStore = defineStore('tasks', {
      * Operations still sitting in the sync queue mean the server copy is
      * behind the local cache — never let it wipe unsynced local changes.
      */
-    async mergeServerItems(serverItems: Task[]): Promise<Task[]> {
+    async mergeServerItems(serverItems: Task[], sequence?: number): Promise<Task[]> {
       if (!this.ownerId) return serverItems
       const cached = await localDb.cachedTasks
         .where('owner_id')
         .equals(this.ownerId)
         .toArray()
+      if (!listRequestIsCurrent(sequence)) return serverItems
       const cachedById = new Map(cached.map((item) => [item.id, item]))
       const pendingOps = await getPendingOperations(this.ownerId, 'task')
+      if (!listRequestIsCurrent(sequence)) return serverItems
       if (pendingOps.length === 0) {
         // Session snapshots may still be replaying in the background, so the
         // server aggregate can lag behind locally applied timer time. Never
@@ -206,7 +325,8 @@ export const useTaskStore = defineStore('tasks', {
           }
           return item
         })
-        await this.dropStaleCache(serverItems, new Set())
+        await this.dropStaleCache(serverItems, new Set(), sequence)
+        if (!listRequestIsCurrent(sequence)) return serverItems
         await saveCachedTasks(merged)
         return merged
       }
@@ -223,17 +343,28 @@ export const useTaskStore = defineStore('tasks', {
       const optimisticCreates = cached.filter(
         (item) => pendingIds.has(item.id) && !serverIds.has(item.id),
       )
-      await this.dropStaleCache(serverItems, pendingIds)
+      await this.dropStaleCache(serverItems, pendingIds, sequence)
+      if (!listRequestIsCurrent(sequence)) return serverItems
+      // Server-confirmed rows still belong in the cache, otherwise a later
+      // offline start would show a list missing everything the server owns.
+      await saveCachedTasks(merged.filter((item) => !pendingIds.has(item.id)))
       return [...merged, ...optimisticCreates]
     },
 
-    async dropStaleCache(serverItems: Task[], keepIds: Set<string>): Promise<void> {
+    async dropStaleCache(
+      serverItems: Task[],
+      keepIds: Set<string>,
+      sequence?: number,
+    ): Promise<void> {
       if (!this.ownerId) return
       const currentIds = new Set(serverItems.map((item) => item.id))
       const cached = await localDb.cachedTasks
         .where('owner_id')
         .equals(this.ownerId)
         .toArray()
+      // The request may have become stale while IndexedDB was being read.
+      // In that case its server ids must not delete a newer optimistic row.
+      if (!listRequestIsCurrent(sequence)) return
       const staleIds = cached
         .filter((item) => !currentIds.has(item.id) && !keepIds.has(item.id))
         .map((item) => item.id)
@@ -244,16 +375,37 @@ export const useTaskStore = defineStore('tasks', {
 
     async load(options: { silent?: boolean } = {}): Promise<void> {
       if (!this.ownerId) throw new Error('Task store is not initialized')
+      const sequence = ++listSequence
       if (!options.silent && this.items.length === 0) {
         this.loading = true
       }
       this.online = navigator.onLine
       try {
+        // If a local create/update/remove started first, let its cache row and
+        // outbox entry land together before this refresh takes a snapshot.
+        await localMutationBarrier
+        if (!listRequestIsCurrent(sequence)) return
+        // Paint the cached tree first. An IndexedDB read costs a millisecond
+        // while the server round trip costs hundreds, and the refresh below
+        // replaces the list in place once it arrives.
+        if (this.items.length === 0) {
+          const cached = await localDb.cachedTasks
+            .where('owner_id')
+            .equals(this.ownerId)
+            .toArray()
+          if (!listRequestIsCurrent(sequence)) return
+          if (cached.length > 0) {
+            this.items = cached
+            this.loading = false
+          }
+        }
         if (this.online) {
           try {
             this.pendingCount = await syncPendingChanges(this.ownerId)
+            this.failedCount = await getFailedSyncCount(this.ownerId)
             const serverItems = await taskService.list()
-            this.items = await this.mergeServerItems(serverItems)
+            const merged = await this.mergeServerItems(serverItems, sequence)
+            if (sequence === listSequence) this.items = merged
             return
           } catch {
             this.online = false
@@ -271,17 +423,24 @@ export const useTaskStore = defineStore('tasks', {
 
     async flush(): Promise<void> {
       if (!this.ownerId || !navigator.onLine) return
+      const apply = async (): Promise<void> => {
+        const sequence = ++listSequence
+        await localMutationBarrier
+        if (!listRequestIsCurrent(sequence)) return
+        const serverItems = await taskService.list()
+        const merged = await this.mergeServerItems(serverItems, sequence)
+        if (sequence === listSequence) this.items = merged
+      }
       try {
         this.pendingCount = await syncPendingChanges(this.ownerId)
-        const serverItems = await taskService.list()
-        this.items = await this.mergeServerItems(serverItems)
+        this.failedCount = await getFailedSyncCount(this.ownerId)
+        await apply()
       } catch (error) {
         if (isNetworkError(error)) {
           this.online = false
           return
         }
-        const serverItems = await taskService.list()
-        this.items = await this.mergeServerItems(serverItems)
+        await apply()
         throw error
       }
     },
@@ -300,68 +459,82 @@ export const useTaskStore = defineStore('tasks', {
 
     async create(payload: TaskCreatePayload): Promise<Task> {
       if (!this.ownerId) throw new Error('Task store is not initialized')
+      const ownerId = this.ownerId
+      // Invalidate every list request that began before this optimistic row.
+      // Otherwise its older server snapshot can replace `items` after the
+      // editor closes, making a successful add appear to do nothing.
+      listSequence += 1
       this.saving = true
-      const now = new Date().toISOString()
-      const id = payload.id ?? crypto.randomUUID()
-      const siblings = this.items.filter((item) => item.parent_id === payload.parent_id)
-      const task: Task = {
-        id,
-        owner_id: this.ownerId,
-        parent_id: payload.parent_id,
-        node_type: payload.node_type,
-        title: payload.title,
-        priority: payload.priority ?? 'MEDIUM',
-        due_date: payload.due_date ?? null,
-        planned_start_date:
-          payload.node_type === 'TASK' ? (payload.planned_start_date ?? null) : null,
-        planned_end_date:
-          payload.node_type === 'TASK' ? (payload.planned_end_date ?? null) : null,
-        dependency_ids: payload.dependency_ids ?? [],
-        status: 'TODO',
-        estimated_seconds: payload.node_type === 'TASK' ? payload.estimated_seconds : 0,
-        budget_mode: payload.budget_mode ?? 'ROLLUP',
-        fixed_budget_seconds: payload.fixed_budget_seconds ?? null,
-        default_estimated_seconds: payload.default_estimated_seconds ?? null,
-        default_repeat_rule: payload.default_repeat_rule ?? null,
-        default_daily_reminder_time: payload.default_daily_reminder_time ?? null,
-        repeat_rule: payload.node_type === 'TASK' ? payload.repeat_rule : 'NONE',
-        daily_reminder_time: payload.node_type === 'TASK' ? payload.daily_reminder_time : null,
-        repeat_end_date: payload.node_type === 'TASK' ? (payload.repeat_end_date ?? null) : null,
-        sort_order: siblings.length
-          ? Math.max(...siblings.map((item) => item.sort_order)) + 1
-          : 0,
-        completed_at: null,
-        created_at: now,
-        updated_at: now,
-        direct_actual_seconds: 0,
-        actual_seconds: 0,
-        planned_seconds: payload.node_type === 'TASK'
-          ? payload.estimated_seconds
-          : payload.budget_mode === 'FIXED_CAP'
-            ? (payload.fixed_budget_seconds ?? 0)
-            : 0,
-        children_estimated_seconds: 0,
-        is_leaf: payload.node_type === 'TASK',
-        task_count: payload.node_type === 'TASK' ? 1 : 0,
-        completed_task_count: 0,
-        progress_ratio: payload.node_type === 'TASK' ? 0 : null,
-        budget_usage_ratio: payload.node_type === 'TASK' && payload.estimated_seconds > 0
-          ? 0
-          : null,
-        budget_level: payload.node_type === 'TASK' && payload.estimated_seconds > 0
-          ? 'NORMAL'
-          : 'NOT_SET',
-      }
       try {
-        this.items.push(task)
-        await saveCachedTask(task)
-        await enqueueSyncOperation(this.ownerId, 'task', id, 'create', {
-          ...payload,
-          id,
+        return await runLocalMutation(async () => {
+          const now = new Date().toISOString()
+          const id = payload.id ?? crypto.randomUUID()
+          const siblings = this.items.filter((item) => item.parent_id === payload.parent_id)
+          const task: Task = {
+            id,
+            owner_id: ownerId,
+            parent_id: payload.parent_id,
+            node_type: payload.node_type,
+            title: payload.title,
+            priority: payload.priority ?? 'MEDIUM',
+            due_date: payload.due_date ?? null,
+            planned_start_date:
+              payload.node_type === 'TASK' ? (payload.planned_start_date ?? null) : null,
+            planned_end_date:
+              payload.node_type === 'TASK' ? (payload.planned_end_date ?? null) : null,
+            dependency_ids: payload.dependency_ids ?? [],
+            status: 'TODO',
+            estimated_seconds: payload.node_type === 'TASK' ? payload.estimated_seconds : 0,
+            budget_mode: payload.budget_mode ?? 'ROLLUP',
+            fixed_budget_seconds: payload.fixed_budget_seconds ?? null,
+            default_estimated_seconds: payload.default_estimated_seconds ?? null,
+            default_repeat_rule: payload.default_repeat_rule ?? null,
+            default_daily_reminder_time: payload.default_daily_reminder_time ?? null,
+            repeat_rule: payload.node_type === 'TASK' ? payload.repeat_rule : 'NONE',
+            daily_reminder_time: payload.node_type === 'TASK' ? payload.daily_reminder_time : null,
+            repeat_end_date: payload.node_type === 'TASK' ? (payload.repeat_end_date ?? null) : null,
+            sort_order: siblings.length
+              ? Math.max(...siblings.map((item) => item.sort_order)) + 1
+              : 0,
+            completed_at: null,
+            created_at: now,
+            updated_at: now,
+            direct_actual_seconds: 0,
+            actual_seconds: 0,
+            planned_seconds: payload.node_type === 'TASK'
+              ? payload.estimated_seconds
+              : payload.budget_mode === 'FIXED_CAP'
+                ? (payload.fixed_budget_seconds ?? 0)
+                : 0,
+            children_estimated_seconds: 0,
+            is_leaf: payload.node_type === 'TASK',
+            task_count: payload.node_type === 'TASK' ? 1 : 0,
+            completed_task_count: 0,
+            progress_ratio: payload.node_type === 'TASK' ? 0 : null,
+            budget_usage_ratio: payload.node_type === 'TASK' && payload.estimated_seconds > 0
+              ? 0
+              : null,
+            budget_level: payload.node_type === 'TASK' && payload.estimated_seconds > 0
+              ? 'NORMAL'
+              : 'NOT_SET',
+          }
+          this.items.push(task)
+          await localDb.transaction(
+            'rw',
+            localDb.cachedTasks,
+            localDb.syncOperations,
+            async () => {
+              await saveCachedTask(task)
+              await enqueueSyncOperation(ownerId, 'task', id, 'create', {
+                ...payload,
+                id,
+              })
+            },
+          )
+          this.pendingCount = await pendingSyncCount(ownerId)
+          this.scheduleFlush()
+          return this.items.find((item) => item.id === id) ?? task
         })
-        this.pendingCount = await pendingSyncCount(this.ownerId)
-        this.scheduleFlush()
-        return this.items.find((item) => item.id === id) ?? task
       } finally {
         this.saving = false
       }
@@ -371,6 +544,7 @@ export const useTaskStore = defineStore('tasks', {
       if (!this.ownerId) throw new Error('Task store is not initialized')
       const existing = this.items.find((item) => item.id === taskId)
       if (!existing) throw new Error('Task not found')
+      listSequence += 1
       this.saving = true
       const updated: Task = {
         ...existing,
@@ -409,6 +583,7 @@ export const useTaskStore = defineStore('tasks', {
       const byId = new Map(this.items.map((task) => [task.id, task]))
       const target = byId.get(taskId)
       if (!target) return
+      listSequence += 1
       const touched: Task[] = []
       target.direct_actual_seconds += secondsDelta
       target.actual_seconds += secondsDelta
@@ -431,6 +606,7 @@ export const useTaskStore = defineStore('tasks', {
 
     async remove(taskId: string): Promise<void> {
       if (!this.ownerId) throw new Error('Task store is not initialized')
+      listSequence += 1
       this.saving = true
       try {
         const deletedIds = new Set<string>([taskId])

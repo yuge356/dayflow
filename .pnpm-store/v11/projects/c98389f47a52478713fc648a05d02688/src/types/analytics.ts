@@ -50,6 +50,9 @@ export interface GanttChartRow {
   /** 所属项目（任务树根节点）；null 表示项目已被删除或未关联项目。 */
   projectId: string | null
   projectTitle: string
+  /** 所属模块；null 表示任务直接挂在项目下。 */
+  moduleId: string | null
+  moduleTitle: string
   status: import('./task').TaskStatus | null
   /** 0-1 之间的投入进度；无法计算时为 null（条形按已投入实色展示）。 */
   progressRatio: number | null
@@ -91,6 +94,13 @@ export interface AnalyticsSummary {
   daily_trend: DailyTrendPoint[]
   budget_comparison: BudgetComparison[]
   project_history: ProjectTimeHistory[]
+}
+
+/** Every Today-page chart, returned through a single request. */
+export interface TodayOverview {
+  calendar_trend: DailyTrendPoint[]
+  hourly_focus: HourlyFocusDistribution
+  task_daily: TaskDailyResponse
 }
 
 export interface AnalyticsDashboard {

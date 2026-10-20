@@ -262,6 +262,31 @@ export const useTaskStore = defineStore('tasks', {
   },
 
   actions: {
+    async createProjectFromTemporary(taskId: string): Promise<Task> {
+      if (!this.ownerId) throw new Error('Task store is not initialized')
+      if (!navigator.onLine) throw new Error('创建项目需要联网；任务和计时已保留，请联网后重试。')
+      this.saving = true
+      try {
+        await localMutationBarrier
+        await this.flush()
+        const pending = await getPendingOperations(this.ownerId, 'task')
+        if (pending.some((operation) => operation.entity_id === taskId)) {
+          throw new Error('临时任务尚未同步成功，任务和计时已保留，请同步后重试。')
+        }
+        const response = await taskService.createProject(taskId)
+        await runLocalMutation(async () => {
+          const sequence = ++listSequence
+          const merged = await this.mergeServerItems(response.tasks, sequence)
+          if (listRequestIsCurrent(sequence)) this.items = merged
+        })
+        const project = response.tasks.find((task) => task.id === response.project_id)
+        if (!project) throw new Error('项目已创建，请刷新项目页查看。')
+        return project
+      } finally {
+        this.saving = false
+      }
+    },
+
     async initialize(ownerId: string): Promise<void> {
       this.ownerId = ownerId
       if (!this.listenerBound) {

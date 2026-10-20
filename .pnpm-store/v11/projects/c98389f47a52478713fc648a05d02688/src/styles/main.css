@@ -6363,19 +6363,6 @@ button.gantt-label:hover .gantt-label__title {
   border-top: 1px dashed var(--line);
 }
 
-.quick-add summary {
-  width: fit-content;
-  color: var(--primary-dark);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 800;
-  list-style: none;
-}
-
-.quick-add summary::-webkit-details-marker {
-  display: none;
-}
-
 .quick-add__body {
   display: grid;
   gap: 14px;
@@ -6387,25 +6374,36 @@ button.gantt-label:hover .gantt-label__title {
   background: #fafaff;
 }
 
-.quick-add__tabs {
+.quick-add__entries {
   display: flex;
-  gap: 7px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.quick-add__tabs button {
-  padding: 7px 13px;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
+.quick-add__entries button {
+  min-height: 40px;
+  padding: 8px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--primary-dark);
   cursor: pointer;
   font-size: 13px;
   font-weight: 800;
 }
 
-.quick-add__tabs button.active {
+.quick-add__entries button:hover,
+.quick-add__entries button.active {
+  border-color: var(--primary);
   background: var(--primary-soft);
-  color: var(--primary-dark);
+}
+
+.quick-add__entries button:focus-visible,
+.quick-add__select:focus-visible,
+.quick-add__input:focus-visible,
+.quick-add__minutes:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .quick-add__form {

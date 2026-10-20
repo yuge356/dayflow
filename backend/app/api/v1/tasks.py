@@ -24,7 +24,9 @@ from app.schemas.task import (
     TaskCreate,
     TaskResponse,
     TaskUpdate,
+    TemporaryProjectResponse,
 )
+from app.services.temporary_projects import create_temporary_project
 from app.services.tasks import (
     build_owned_task_responses,
     collect_subtree_ids,
@@ -213,6 +215,19 @@ async def read_task(
     await get_owned_task(db, current_user.id, task_id)
     responses = await build_owned_task_responses(db, current_user.id)
     return next(item for item in responses if item.id == task_id)
+
+
+@router.post("/{task_id}/create-project", response_model=TemporaryProjectResponse)
+async def file_temporary_task_as_project(
+    task_id: UUID, db: DatabaseSession, current_user: CurrentUser,
+) -> TemporaryProjectResponse:
+    """Create a standalone project and move its source task atomically."""
+    project_id = await create_temporary_project(
+        db, current_user.id, task_id, current_user.profile.timezone,
+    )
+    responses = await build_owned_task_responses(db, current_user.id)
+    await db.commit()
+    return TemporaryProjectResponse(project_id=project_id, tasks=responses)
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)

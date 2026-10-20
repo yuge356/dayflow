@@ -10,6 +10,10 @@
       </section>
 
       <FormMessage :message="errorMessage || timer.syncError" />
+      <p v-if="createdTemporaryProject" class="form-message form-message--success" role="status">
+        已创建项目「{{ createdTemporaryProject.title }}」，任务和计时记录已保留。
+        <RouterLink :to="{ path: '/tasks', query: { task: createdTemporaryProject.id } }">查看项目</RouterLink>
+      </p>
 
       <SyncStatusBanner
         :pending-count="daily.pendingCount"
@@ -254,23 +258,34 @@
             </li>
           </TransitionGroup>
 
-          <details ref="quickAddDetails" class="quick-add">
-            <summary>+ 添加今日任务</summary>
-            <div class="quick-add__body">
+          <section class="quick-add" aria-label="添加今日任务">
+            <div class="quick-add__entries" role="group" aria-label="添加方式">
+              <button
+                type="button"
+                :class="{ active: quickAddOpen && itemKind === 'existing' }"
+                :aria-expanded="quickAddOpen && itemKind === 'existing'"
+                aria-controls="today-quick-add-panel"
+                @click="toggleQuickAdd('existing')"
+              >
+                + 添加已有任务
+              </button>
+              <button
+                type="button"
+                :class="{ active: quickAddOpen && itemKind === 'new' }"
+                :aria-expanded="quickAddOpen && itemKind === 'new'"
+                aria-controls="today-quick-add-panel"
+                @click="toggleQuickAdd('new')"
+              >
+                + 新建任务
+              </button>
+            </div>
+            <div v-if="quickAddOpen" id="today-quick-add-panel" class="quick-add__body">
               <p class="quick-add__hint">
-                选择一个还没加入今天的可计时项目或任务，也可以直接新建任务。
+                {{ itemKind === 'existing' ? '选择已有的项目或任务，加入今日任务。' : '填写任务名称和计划用时，创建后直接加入今日任务。' }}
               </p>
-              <div class="quick-add__tabs" role="group" aria-label="添加方式">
-                <button type="button" :class="{ active: itemKind === 'existing' }" @click="itemKind = 'existing'">
-                  选择已有
-                </button>
-                <button type="button" :class="{ active: itemKind === 'new' }" @click="itemKind = 'new'">
-                  新建任务
-                </button>
-              </div>
 
               <form v-if="itemKind === 'existing'" class="quick-add__form" @submit.prevent="addItem">
-                <select v-model="planTaskId" class="quick-add__select" required aria-label="选择已有项目或任务">
+                <select ref="existingTaskSelect" v-model="planTaskId" class="quick-add__select" required aria-label="选择已有项目或任务">
                   <option value="">选择还没加入今天的项目或任务…</option>
                   <option v-for="task in availableTasks" :key="task.id" :value="task.id">
                     {{ availableTaskLabel(task) }}
@@ -287,12 +302,13 @@
                   :aria-busy="quickAddBusy"
                   :title="quickAddButtonTitle"
                 >
-                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '加入今天' }}
                 </button>
               </form>
 
               <form v-else class="quick-add__form" @submit.prevent="addItem">
                 <input
+                  ref="newTaskNameInput"
                   v-model.trim="newTaskTitle"
                   class="quick-add__input"
                   maxlength="200"
@@ -320,7 +336,7 @@
                   :aria-busy="quickAddBusy"
                   :title="quickAddButtonTitle"
                 >
-                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '添加中…' : '添加' }}
+                  {{ daily.loading || !daily.plan ? '准备中…' : daily.saving || tasks.saving ? '创建中…' : '创建并加入今天' }}
                 </button>
               </form>
               <p v-if="itemKind === 'existing'" class="quick-add__hint quick-add__hint--muted">
@@ -333,7 +349,7 @@
                 临时任务会归档到项目页的“临时任务”里，之后可以随时归入某个项目。
               </p>
             </div>
-          </details>
+          </section>
         </section>
       </div>
 
@@ -494,6 +510,15 @@
     </main>
   </AppShell>
 
+  <TemporaryProjectDialog
+    v-if="temporaryProjectTask"
+    :title="temporaryProjectTask.title"
+    :busy="creatingTemporaryProject"
+    :error="temporaryProjectError"
+    @accept="acceptTemporaryProject"
+    @decline="temporaryProjectTask = null"
+  />
+
   <Teleport to="body">
     <div
       v-if="focusTooltip"
@@ -508,16 +533,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref, watch } from 'vue'
 
 import AppShell from '@/components/AppShell.vue'
 import FormMessage from '@/components/FormMessage.vue'
+import TemporaryProjectDialog from '@/components/TemporaryProjectDialog.vue'
 import SyncStatusBanner from '@/components/SyncStatusBanner.vue'
 import GanttChart from '@/components/GanttChart.vue'
 import { analyticsService } from '@/services/analytics'
 import { useAuthStore } from '@/stores/auth'
 import { useDailyPlanStore } from '@/stores/daily-plans'
-import { useTaskStore } from '@/stores/tasks'
+import { isUnfiledTask, useTaskStore } from '@/stores/tasks'
 import { useTimerStore } from '@/stores/timer'
 import type {
   DailyTrendPoint,
@@ -552,12 +578,19 @@ const ganttSeries = ref<TaskDailySeries[]>([])
 const ganttLoading = ref(false)
 const ganttError = ref('')
 const itemKind = ref<'existing' | 'new'>('existing')
+const quickAddOpen = ref(false)
+const existingTaskSelect = ref<HTMLSelectElement | null>(null)
+const newTaskNameInput = ref<HTMLInputElement | null>(null)
 const planTaskId = ref('')
 const newTaskTitle = ref('')
 const newTaskParentId = ref('')
 const estimatedMinutes = ref(30)
 const selectedItemId = ref('')
 const errorMessage = ref('')
+const temporaryProjectTask = ref<Task | null>(null)
+const creatingTemporaryProject = ref(false)
+const temporaryProjectError = ref('')
+const createdTemporaryProject = ref<Task | null>(null)
 let initialLoadFinished = false
 let calendarRequestId = 0
 let distributionRequestId = 0
@@ -831,10 +864,12 @@ watch(newTaskParentId, () => {
     : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
 })
 
-watch(planTaskId, (taskId) => {
-  if (itemKind.value !== 'existing') return
-  const task = tasks.items.find((candidate) => candidate.id === taskId)
-  if (!task) return
+function syncExistingTaskEstimate(): void {
+  const task = tasks.items.find((candidate) => candidate.id === planTaskId.value)
+  if (!task) {
+    estimatedMinutes.value = QUICK_ADD_FALLBACK_MINUTES
+    return
+  }
   const initialSeconds = task.estimated_seconds > 0
     ? task.estimated_seconds
     : inheritedTaskEstimate(tasks.items, task.id)
@@ -843,6 +878,10 @@ watch(planTaskId, (taskId) => {
   estimatedMinutes.value = initialSeconds > 0
     ? Math.max(1, Math.floor(initialSeconds / 60))
     : QUICK_ADD_FALLBACK_MINUTES
+}
+
+watch(planTaskId, () => {
+  if (itemKind.value === 'existing') syncExistingTaskEstimate()
 })
 
 watch(itemKind, (kind) => {
@@ -852,8 +891,7 @@ watch(itemKind, (kind) => {
       : Math.max(1, Math.floor(quickAddInheritedSeconds.value / 60))
     return
   }
-  const selected = tasks.items.find((task) => task.id === planTaskId.value)
-  if (!selected) estimatedMinutes.value = QUICK_ADD_FALLBACK_MINUTES
+  syncExistingTaskEstimate()
 })
 
 const repeatLabels: Record<Task['repeat_rule'], string> = {
@@ -1294,11 +1332,22 @@ onMounted(async () => {
 
 // 切换页面后收起"添加今日任务"表单：KeepAlive 会保留展开状态，主动关闭
 // 以免回到本页时残留上次未完成的添加操作。
-const quickAddDetails = ref<HTMLDetailsElement | null>(null)
-
 onDeactivated(() => {
-  if (quickAddDetails.value) quickAddDetails.value.open = false
+  quickAddOpen.value = false
+  if (!creatingTemporaryProject.value) temporaryProjectTask.value = null
 })
+
+async function toggleQuickAdd(kind: 'existing' | 'new'): Promise<void> {
+  if (quickAddOpen.value && itemKind.value === kind) {
+    quickAddOpen.value = false
+    return
+  }
+  itemKind.value = kind
+  quickAddOpen.value = true
+  await nextTick()
+  if (kind === 'new') newTaskNameInput.value?.focus()
+  else existingTaskSelect.value?.focus()
+}
 
 onActivated(() => {
   if (!initialLoadFinished) return
@@ -1546,7 +1595,45 @@ async function toggleDone(item: DailyPlanItem): Promise<void> {
         status: newStatus,
       })
     }
+    if (newStatus === 'DONE') offerTemporaryProject(item)
   })
+}
+
+function offerTemporaryProject(item: DailyPlanItem): void {
+  const task = tasks.items.find((candidate) => candidate.id === item.task_id)
+  if (!task || !isUnfiledTask(task, tasks.inboxProjectId)) return
+  createdTemporaryProject.value = null
+  temporaryProjectError.value = ''
+  temporaryProjectTask.value = task
+}
+
+async function acceptTemporaryProject(): Promise<void> {
+  if (!temporaryProjectTask.value || creatingTemporaryProject.value) return
+  creatingTemporaryProject.value = true
+  temporaryProjectError.value = ''
+  const oldTitles = new Map(tasks.items.map((task) =>
+    [task.id, projectPrefixedTaskTitle(task, tasks.items)],
+  ))
+  try {
+    createdTemporaryProject.value = await tasks.createProjectFromTemporary(temporaryProjectTask.value.id)
+    temporaryProjectTask.value = null
+    // Keep current/future daily snapshots consistent with every renamed
+    // project in the collision family, without touching historical titles.
+    await runAction(async () => {
+      if (!auth.user) return
+      for (const task of tasks.items) {
+        const title = projectPrefixedTaskTitle(task, tasks.items)
+        if (oldTitles.has(task.id) && oldTitles.get(task.id) !== title) {
+          await daily.syncLinkedTaskSnapshot(auth.user.profile.id, task.id, { title })
+        }
+      }
+    })
+    refreshTimeCharts()
+  } catch (error) {
+    temporaryProjectError.value = getApiErrorMessage(error)
+  } finally {
+    creatingTemporaryProject.value = false
+  }
 }
 
 async function startItem(item: DailyPlanItem): Promise<void> {
@@ -1606,7 +1693,10 @@ async function stopTiming(): Promise<void> {
   await runAction(async () => {
     await timer.finish(false)
     daily.setActiveItem(null)
-    if (item) await daily.applyEndedTimer(item.id, actualSeconds)
+    if (item) {
+      await daily.applyEndedTimer(item.id, actualSeconds)
+      offerTemporaryProject(item)
+    }
   })
   refreshTimeCharts()
 }
@@ -1623,6 +1713,7 @@ async function completeActive(): Promise<void> {
       if (item.task_id && tasks.items.some((task) => task.id === item.task_id)) {
         await tasks.update(item.task_id, { status: 'DONE' })
       }
+      offerTemporaryProject(item)
     }
   })
   refreshTimeCharts()

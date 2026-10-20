@@ -158,3 +158,10 @@ class TaskBulkApplyResponse(BaseModel):
     affected_count: int
     skipped_count: int
     tasks: list[TaskResponse]
+
+
+class TemporaryProjectResponse(BaseModel):
+    """Created project identity and renamed/moved nodes in the refreshed tree."""
+
+    project_id: UUID
+    tasks: list[TaskResponse]

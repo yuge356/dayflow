@@ -8,6 +8,13 @@ import type {
 } from '@/types/task'
 
 export const taskService = {
+  async createProject(taskId: string): Promise<{ project_id: string; tasks: Task[] }> {
+    const { data } = await http.post<{ project_id: string; tasks: Task[] }>(
+      `/tasks/${taskId}/create-project`,
+    )
+    return data
+  },
+
   async list(): Promise<Task[]> {
     const { data } = await http.get<Task[]>('/tasks')
     return data

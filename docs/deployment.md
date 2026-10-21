@@ -93,10 +93,10 @@ MVP 使用 Supabase 控制台提供的数据库备份/导出能力。手工运�
 
 ## 二、Vercel Services 部署
 
-仓库根目录的 `vercel.json` 使用 Vercel Services 稳定版配置，在同一个 Vercel Project 中声明两个服务：
+仓库根目录的 `vercel.json` 使用 Vercel Services 配置，在同一个 Vercel Project 中声明两个服务：
 
-- `frontend`：服务根目录为 `frontend/`，由 Vercel 根据 `package.json` 自动识别为 Vite；
-- `backend`：服务根目录为 `backend/`，由 Vercel 根据 `pyproject.toml` 自动识别为 FastAPI，ASGI 入口为
+- `frontend`：服务根目录为 `frontend/`，显式设置 `framework: "vite"`；
+- `backend`：服务根目录为 `backend/`，显式设置 `framework: "fastapi"`，ASGI 入口为
   `app.main:app`；
 - `/api/*` 请求转发到 `backend`，其他请求转发到 `frontend`。现有前端默认使用
   `VITE_API_BASE_URL=/api/v1`，因此生产环境保持同源访问，无需硬编码后端域名。
@@ -114,6 +114,12 @@ MVP 使用 Supabase 控制台提供的数据库备份/导出能力。手工运�
 4. 不要把 Project Root Directory 改为 `frontend` 或 `backend`；`vercel.json` 必须从仓库根目录读取。
 
 ### 2. 配置环境变量
+
+两个服务目录都保留了供 Docker Compose 使用的 `Dockerfile`，因此必须在各自的服务声明内固定框架，
+不能依赖自动检测。否则 Vercel 会同时识别 Vite/FastAPI 与 Container，并在构建前报
+`Multiple frameworks detected in project root`。不要删除 Dockerfile，也不要把 `framework`
+放到 `vercel.json` 顶层；Services 模式下它属于每个服务自己的配置。
+字段含义以 [Vercel Services 配置说明](https://vercel.com/kb/guide/vercel-services) 为准。
 
 在 **Settings → Environment Variables** 中为 Production（需要时也勾选 Preview）配置：
 
@@ -156,6 +162,17 @@ https://<生产域名>/api/v1/...
 
 Vercel 部署不会自动执行 Alembic。发布包含数据库迁移的版本前，先在受控终端使用同一个
 `APP_DATABASE_URL` 执行 `alembic upgrade head`，确认成功后再部署应用。
+
+#### 修复 2026-10-20 的框架识别失败
+
+提交 `12a405c` 的失败通知来自框架自动检测，不是数据库访问失败。修复后的 `vercel.json`
+需要先提交并推送到 `main`，再确认 Vercel 新部署的 Source 指向修复提交；对旧提交直接点
+Redeploy 仍会使用缺少框架声明的旧配置。新部署达到 **Ready** 后，再检查登录、项目列表和今日任务。
+本地构建成功只能验证代码和配置，不能替代线上部署结果。
+
+Supabase 的 2026-10-30 新表 Data API 授权通知与这次构建错误无关。当前业务 API 通过
+SQLAlchemy 直连 PostgreSQL，不需要为此向 `anon` 开放业务表；详见
+[Supabase 权限变更说明](supabase-setup.md#2026-10-30-data-api-新表授权变更)。
 
 ### 4. Vercel 运行限制
 

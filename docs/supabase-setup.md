@@ -101,6 +101,26 @@ Supabase 的 PostgreSQL 16+ 角色成员关系会单独记录 `SET` 选项；迁
 该角色只获得现有 12 张业务表的增删改查权限和两个 RLS 身份函数的执行权限；没有默认未来对象权限，新增表
 时必须在对应迁移中显式授权。
 
+## 2026-10-30 Data API 新表授权变更
+
+Supabase 通知从 2026-10-30 起，现有项目中新建的 `public` 表不再自动获得 Data API 访问授权。
+已有表保留原来的权限；这不是一次数据库故障，也不是 GitHub 推送导致的错误。
+[官方变更公告](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)
+明确说明，通过连接串、ORM 或应用服务器直连 PostgreSQL 的应用不受此变更影响。
+
+本项目目前的访问路径是：
+
+- 浏览器的 Supabase JS 仅使用 `supabase.auth` 做注册、登录和会话管理；
+- 项目、任务、计划和计时请求经 Axios 访问 `/api/v1`，由 FastAPI 使用 SQLAlchemy/asyncpg
+  通过 Session pooler 连接 PostgreSQL，不经过 PostgREST 或 GraphQL Data API；
+- 业务查询使用 `dayflow_app` 和现有 RLS，新增业务表仍需在迁移内向该运行角色明确授权。
+  例如 `0018_project_templates.py` 已包含项目模板表的增删改查授权。
+
+因此无需照邮件的通用示例给业务表增加 `anon`、`authenticated` 或 `service_role` 权限，
+也不需要关闭 RLS 或重建数据库。邮件中的 `your_table` 只是占位符，不能直接粘贴运行。
+若未来引入 `supabase.from()`、`supabase.rpc()`、`/rest/v1` 或 GraphQL 访问业务数据，
+应在同一次迁移中评审最小权限 GRANT 和相应的 RLS 策略，再验证未登录用户及跨用户隔离。
+
 ## 验证顺序
 
 1. 重启前后端，使 `.env` 生效；

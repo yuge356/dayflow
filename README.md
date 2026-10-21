@@ -125,6 +125,11 @@ Vite 开发服务器也会直接守护本地后端，因此即使使用 `pnpm de
 
 ## 验证
 
+Vercel Services 部署已在 `vercel.json` 中分别固定前端 `vite` 和后端 `fastapi`，避免目录中的
+Dockerfile 导致多框架识别冲突；修复后需推送新提交触发部署，不能只重试旧提交。
+Supabase 2026-10-30 的新表 Data API 授权变更不影响当前后端直连 PostgreSQL 的访问方式，
+无需为此开放匿名表访问。详见[部署教程](docs/deployment.md)与[Supabase 配置](docs/supabase-setup.md)。
+
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m pytest -q
